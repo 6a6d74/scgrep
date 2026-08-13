@@ -1,19 +1,16 @@
-# SCGRep deployment.
+# SCGRep deployment (self-contained).
 #
-# Redis is already running as a service named "redis" on the shared "jztnet"
-# docker bridge network (per the deployment brief). SCGRep joins that existing
-# external network and reaches Redis at redis:6379.
+# This stack runs everything it needs: a managed Redis, the SCGRep service, and
+# a Traefik reverse proxy. All three share a single Compose-managed bridge
+# network named "traefik".
 #
-# Because Redis is external to this project, `depends_on` cannot gate on it;
-# SCGRep instead waits for Redis to become reachable on startup (see the
-# REDIS_STARTUP_TIMEOUT setting).
+# SCGRep waits for Redis via `depends_on` (Redis has a healthcheck), and reaches
+# it at redis:6379. Ingress is handled by Traefik using the file provider
+# (./traefik/dynamic.yml); SCGRep does not publish its port directly. With the
+# defaults below:
 #
-# Ingress is handled by Traefik: SCGRep no longer publishes its port directly.
-# Traefik discovers it via the docker provider labels and routes the metrics
-# endpoint. With the defaults below, metrics are reachable at:
-#
-#   http://localhost/metrics          (via Traefik on :80)
-#   http://localhost:8080/dashboard/  (Traefik dashboard, local use only)
+#   http://localhost/metrics     (metrics, via Traefik on :80)
+#   http://localhost/dashboard/  (Traefik dashboard, behind HTTP basic auth)
 #
 #   docker compose up --build
 
@@ -40,13 +37,30 @@ services:
       #   cp traefik/dashboard-users.example traefik/dashboard-users
       - ./traefik/dashboard-users:/etc/traefik/dashboard-users:ro
     networks:
-      - jztnet
+      - traefik
+
+  redis:
+    image: redis:7-alpine
+    # No explicit container_name: reachable as "redis" on the network via its
+    # Compose service name, without colliding with any other "redis" container.
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+    networks:
+      - traefik
 
   scgrep:
     build: .
     image: scgrep:latest
     container_name: scgrep
     restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
     # An optional .env can supply/override extra values; anything set in the
     # `environment` block below takes precedence over it (Compose evaluates
     # `environment` after `env_file`).
@@ -83,10 +97,9 @@ services:
       retries: 3
       start_period: 10s
     networks:
-      - jztnet
+      - traefik
 
 networks:
-  jztnet:
-    # Pre-existing bridge network hosting the provisioned Redis service.
-    name: jztnet
-    external: true
+  traefik:
+    # Compose-managed bridge network shared by all services in this stack.
+    name: traefik

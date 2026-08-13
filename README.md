@@ -74,21 +74,22 @@ All configuration is via environment variables (see `.env.example`).
 
 ### Docker
 
-Redis is expected to already run as a service named `redis` on the shared
-`jztnet` docker bridge network (an existing/external network). The full
-configuration is set inline in the `environment:` block of
-`docker-compose.yml`, so no extra setup is needed to start:
+The stack is self-contained: `docker compose up --build` starts a managed
+**Redis**, the **SCGRep** service, and a **Traefik** reverse proxy, all on a
+single Compose-managed bridge network named `traefik`. SCGRep waits for Redis to
+be healthy (via `depends_on`) before starting, and its configuration is set
+inline in the `environment:` block of `docker-compose.yml`:
 
 ```bash
+cp traefik/dashboard-users.example traefik/dashboard-users   # required (see below)
 docker compose up --build
 ```
 
 The container is named `scgrep` by default.
 
-The stack includes a **Traefik** reverse proxy that fronts the metrics endpoint.
-SCGRep does not publish its port directly; Traefik reaches it by service name
-(`scgrep:8000`) over the shared network, using the file-provider routing in
-`traefik/dynamic.yml`. After `docker compose up`:
+Traefik fronts the metrics endpoint; SCGRep does not publish its port directly.
+Traefik reaches it by service name (`scgrep:8000`) over the shared network, using
+the file-provider routing in `traefik/dynamic.yml`. After `docker compose up`:
 
 - Metrics: `http://localhost/metrics` (Traefik `web` entrypoint on `:80`)
 - Traefik dashboard: `http://localhost/dashboard/`, protected by HTTP basic auth.
@@ -114,9 +115,8 @@ cp .env.example .env      # optional; edit as needed
 docker compose up --build
 ```
 
-To join a different network, change the `jztnet` entry under `networks:` (set
-`name:` to your network and keep `external: true`). If you change `METRICS_PORT`,
-update the backend URL in `traefik/dynamic.yml` to match.
+If you change `METRICS_PORT`, update the backend URL in `traefik/dynamic.yml` to
+match.
 
 ### Locally (development)
 
