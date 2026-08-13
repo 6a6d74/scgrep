@@ -1,5 +1,7 @@
 # SCGRep — Sensor Centre Global Replay service
 
+[![tests](https://github.com/6a6d74/scgrep/actions/workflows/tests.yml/badge.svg)](https://github.com/6a6d74/scgrep/actions/workflows/tests.yml)
+
 SCGRep is a [WIS2](https://community.wmo.int/en/activity-areas/wis) **Sensor
 Centre** that continuously measures the real-time performance of one or more
 **Global Replay** services and publishes the results as Prometheus metrics.
