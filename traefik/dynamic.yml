@@ -25,13 +25,13 @@ http:
   middlewares:
     dashboard-auth:
       basicAuth:
-        # htpasswd-style credentials. Default is admin / changeme — CHANGE THIS.
-        # Generate a new hash (no docker socket needed) with, e.g.:
-        #   htpasswd -nB admin
-        #   openssl passwd -apr1 'your-password' | sed 's/^/admin:/'
-        # In this file the '$' characters are literal (do not double them).
-        users:
-          - 'admin:$apr1$ExmA3.So$vJX/bCXJ3RgU8XUWueYsl1'
+        # Credentials live in a gitignored htpasswd file. Create it before
+        # starting the stack:
+        #   cp traefik/dashboard-users.example traefik/dashboard-users
+        # then set a real credential (default is admin / changeme — CHANGE IT):
+        #   htpasswd -nB admin > traefik/dashboard-users
+        #   openssl passwd -apr1 'your-password' | sed 's/^/admin:/' > traefik/dashboard-users
+        usersFile: /etc/traefik/dashboard-users
 
   services:
     scgrep:

@@ -11,6 +11,10 @@ htmlcov/
 venv/
 env/
 .env
+
+# Traefik dashboard credentials (create from traefik/dashboard-users.example)
+traefik/dashboard-users
+
 .idea/
 .vscode/
 .DS_Store

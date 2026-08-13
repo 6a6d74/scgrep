@@ -36,6 +36,9 @@ services:
       - "80:80"
     volumes:
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+      # Gitignored basic-auth credentials; create from the example first:
+      #   cp traefik/dashboard-users.example traefik/dashboard-users
+      - ./traefik/dashboard-users:/etc/traefik/dashboard-users:ro
     networks:
       - jztnet
 

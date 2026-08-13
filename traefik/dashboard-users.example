@@ -1,0 +1,10 @@
+# Traefik dashboard basic-auth credentials (htpasswd format), one user per line.
+#
+# Copy this file to `traefik/dashboard-users` (which is gitignored) and set a
+# real credential. Generate an entry with either:
+#   htpasswd -nB admin > traefik/dashboard-users
+#   openssl passwd -apr1 'your-password' | sed 's/^/admin:/' > traefik/dashboard-users
+#
+# The real file is read directly by Traefik, so keep it to credential lines only
+# (no comments). The default below is admin / changeme — CHANGE IT.
+admin:$apr1$ExmA3.So$vJX/bCXJ3RgU8XUWueYsl1
