@@ -12,8 +12,23 @@ services:
     image: scgrep:latest
     container_name: scgrep
     restart: unless-stopped
+    # An optional .env can supply/override extra values; anything set in the
+    # `environment` block below takes precedence over it (Compose evaluates
+    # `environment` after `env_file`).
     env_file:
-      - .env
+      - path: .env
+        required: false
+    environment:
+      SENSOR_CENTRE_ID: io-wis2dev-myinstance-sensor-centre-global-replay
+      SUBSCRIPTION_TOPICS: "cache/a/wis2/ca-eccc-msc/data/core/weather/surface-based-observations/synop,monitor/a/wis2/ca-eccc-msc"
+      GLOBAL_BROKER_URLS: "mqtts://everyone:everyone@globalbroker.meteo.fr:8883"
+      GLOBAL_REPLAY_CENTRE_IDS: ca-eccc-msc-global-replay
+      GLOBAL_REPLAY_URLS: "https://wis2-grep.weather.gc.ca"
+      REDIS_URL: redis:6379
+      METRICS_ENDPOINT: /metrics
+      METRICS_PORT: "8000"
+      TIME_LAG: "300"
+      TEST_INTERVAL: "300"
     ports:
       - "8000:8000"   # Prometheus metrics (METRICS_PORT)
     networks:
