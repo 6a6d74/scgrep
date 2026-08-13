@@ -1,7 +1,8 @@
 # Traefik dynamic configuration (file provider).
 #
-# Routes the SCGRep metrics endpoint. SCGRep is reached by its service name on
-# the shared network, so no docker socket access is required.
+# Routes the SCGRep metrics endpoint and the Traefik dashboard. SCGRep is
+# reached by its service name on the shared network, so no docker socket access
+# is required.
 
 http:
   routers:
@@ -10,6 +11,27 @@ http:
         - web
       rule: "PathPrefix(`/metrics`)"
       service: scgrep
+
+    # Traefik dashboard/API, served on the same entrypoint and protected by
+    # HTTP basic auth. Reachable at http://<host>/dashboard/
+    dashboard:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
+      service: api@internal
+      middlewares:
+        - dashboard-auth
+
+  middlewares:
+    dashboard-auth:
+      basicAuth:
+        # htpasswd-style credentials. Default is admin / changeme — CHANGE THIS.
+        # Generate a new hash (no docker socket needed) with, e.g.:
+        #   htpasswd -nB admin
+        #   openssl passwd -apr1 'your-password' | sed 's/^/admin:/'
+        # In this file the '$' characters are literal (do not double them).
+        users:
+          - 'admin:$apr1$ExmA3.So$vJX/bCXJ3RgU8XUWueYsl1'
 
   services:
     scgrep:

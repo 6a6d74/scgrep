@@ -91,8 +91,10 @@ SCGRep does not publish its port directly; Traefik reaches it by service name
 `traefik/dynamic.yml`. After `docker compose up`:
 
 - Metrics: `http://localhost/metrics` (Traefik `web` entrypoint on `:80`)
-- Traefik dashboard: `http://localhost:8080/dashboard/` (insecure mode — local
-  use only; do not expose `:8080` publicly)
+- Traefik dashboard: `http://localhost/dashboard/`, protected by HTTP basic auth
+  (default `admin` / `changeme` — **change this**). Update the credentials in the
+  `dashboard-auth` middleware in `traefik/dynamic.yml`; generate a new hash with
+  `htpasswd -nB admin` or `openssl passwd -apr1 'your-password' | sed 's/^/admin:/'`.
 
 Edit the values in the `environment:` block of `docker-compose.yml` for your
 deployment. Those values take precedence over an optional `.env` file, which may

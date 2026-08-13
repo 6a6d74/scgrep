@@ -24,17 +24,16 @@ services:
     restart: unless-stopped
     command:
       # File provider (no docker socket needed): routing is defined in
-      # ./traefik/dynamic.yml, which points at the scgrep service by name.
+      # ./traefik/dynamic.yml, which points at the scgrep service by name and
+      # exposes the dashboard behind HTTP basic auth.
       - "--providers.file.filename=/etc/traefik/dynamic.yml"
       - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
-      # Dashboard/API on :8080. Insecure mode is for local use only — do not
-      # expose :8080 publicly.
+      # Dashboard enabled but NOT insecure: it is served through the `web`
+      # entrypoint behind the basic-auth middleware (see dynamic.yml).
       - "--api.dashboard=true"
-      - "--api.insecure=true"
     ports:
       - "80:80"
-      - "8080:8080"   # Traefik dashboard (local use only)
     volumes:
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
     networks:
