@@ -31,6 +31,22 @@ services:
       TEST_INTERVAL: "300"
     ports:
       - "8000:8000"   # Prometheus metrics (METRICS_PORT)
+    healthcheck:
+      # Probe the metrics endpoint (honours METRICS_PORT/METRICS_ENDPOINT).
+      # No curl/wget in the slim image, so use Python; urlopen raises on non-200.
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import os, sys, urllib.request
+          port = os.environ.get("METRICS_PORT", "8000")
+          endpoint = os.environ.get("METRICS_ENDPOINT", "/metrics")
+          urllib.request.urlopen(f"http://localhost:{port}{endpoint}", timeout=5)
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     networks:
       - jztnet
 
