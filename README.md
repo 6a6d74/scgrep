@@ -37,8 +37,9 @@ retrieval paths.
 
 ## Metrics
 
-Exposed at `METRICS_ENDPOINT` (default `/metrics`) on `METRICS_PORT`
-(default `8000`):
+Served by SCGRep at `METRICS_ENDPOINT` (default `/metrics`) on `METRICS_PORT`
+(default `8000`). In the Docker deployment this is fronted by Traefik and
+reachable at `http://<host>/metrics` (see [Running](#running)):
 
 | Metric | Labels | Description |
 | --- | --- | --- |
@@ -84,6 +85,15 @@ docker compose up --build
 
 The container is named `scgrep` by default.
 
+The stack includes a **Traefik** reverse proxy that fronts the metrics endpoint.
+SCGRep does not publish its port directly; Traefik reaches it by service name
+(`scgrep:8000`) over the shared network, using the file-provider routing in
+`traefik/dynamic.yml`. After `docker compose up`:
+
+- Metrics: `http://localhost/metrics` (Traefik `web` entrypoint on `:80`)
+- Traefik dashboard: `http://localhost:8080/dashboard/` (insecure mode — local
+  use only; do not expose `:8080` publicly)
+
 Edit the values in the `environment:` block of `docker-compose.yml` for your
 deployment. Those values take precedence over an optional `.env` file, which may
 supply additional or overridable settings (for example `LOG_LEVEL`):
@@ -94,7 +104,8 @@ docker compose up --build
 ```
 
 To join a different network, change the `jztnet` entry under `networks:` (set
-`name:` to your network and keep `external: true`).
+`name:` to your network and keep `external: true`). If you change `METRICS_PORT`,
+update the backend URL in `traefik/dynamic.yml` to match.
 
 ### Locally (development)
 

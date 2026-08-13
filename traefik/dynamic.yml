@@ -1,0 +1,19 @@
+# Traefik dynamic configuration (file provider).
+#
+# Routes the SCGRep metrics endpoint. SCGRep is reached by its service name on
+# the shared network, so no docker socket access is required.
+
+http:
+  routers:
+    scgrep:
+      entryPoints:
+        - web
+      rule: "PathPrefix(`/metrics`)"
+      service: scgrep
+
+  services:
+    scgrep:
+      loadBalancer:
+        servers:
+          # METRICS_PORT on the scgrep service.
+          - url: "http://scgrep:8000"

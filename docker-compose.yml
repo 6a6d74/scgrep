@@ -8,9 +8,38 @@
 # SCGRep instead waits for Redis to become reachable on startup (see the
 # REDIS_STARTUP_TIMEOUT setting).
 #
+# Ingress is handled by Traefik: SCGRep no longer publishes its port directly.
+# Traefik discovers it via the docker provider labels and routes the metrics
+# endpoint. With the defaults below, metrics are reachable at:
+#
+#   http://localhost/metrics          (via Traefik on :80)
+#   http://localhost:8080/dashboard/  (Traefik dashboard, local use only)
+#
 #   docker compose up --build
 
 services:
+  traefik:
+    image: traefik:v3.1
+    container_name: traefik
+    restart: unless-stopped
+    command:
+      # File provider (no docker socket needed): routing is defined in
+      # ./traefik/dynamic.yml, which points at the scgrep service by name.
+      - "--providers.file.filename=/etc/traefik/dynamic.yml"
+      - "--providers.file.watch=true"
+      - "--entrypoints.web.address=:80"
+      # Dashboard/API on :8080. Insecure mode is for local use only — do not
+      # expose :8080 publicly.
+      - "--api.dashboard=true"
+      - "--api.insecure=true"
+    ports:
+      - "80:80"
+      - "8080:8080"   # Traefik dashboard (local use only)
+    volumes:
+      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+    networks:
+      - jztnet
+
   scgrep:
     build: .
     image: scgrep:latest
@@ -33,8 +62,8 @@ services:
       METRICS_PORT: "8000"
       TIME_LAG: "300"
       TEST_INTERVAL: "300"
-    ports:
-      - "8000:8000"   # Prometheus metrics (METRICS_PORT)
+    # No published ports: Traefik fronts the metrics endpoint, reaching this
+    # container by service name (scgrep:8000) over the shared network.
     healthcheck:
       # Probe the metrics endpoint (honours METRICS_PORT/METRICS_ENDPOINT).
       # No curl/wget in the slim image, so use Python; urlopen raises on non-200.
