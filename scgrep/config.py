@@ -1,0 +1,148 @@
+"""Configuration for SCGRep, loaded and validated from environment variables."""
+
+from __future__ import annotations
+
+import os
+import uuid
+from dataclasses import dataclass, field
+from urllib.parse import urlparse
+
+
+class ConfigError(Exception):
+    """Raised when the environment configuration is invalid."""
+
+
+def _split(value: str) -> list[str]:
+    """Split a comma-delimited environment value, trimming whitespace/empties."""
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+@dataclass(frozen=True)
+class BrokerConfig:
+    """A single Global Broker connection, parsed from an ``mqtt(s)://`` URL."""
+
+    url: str
+    host: str
+    port: int
+    username: str | None
+    password: str | None
+    tls: bool
+
+    @classmethod
+    def from_url(cls, url: str) -> "BrokerConfig":
+        parsed = urlparse(url)
+        if parsed.scheme not in ("mqtt", "mqtts"):
+            raise ConfigError(f"Unsupported MQTT scheme in broker URL: {url!r}")
+        if not parsed.hostname:
+            raise ConfigError(f"Missing host in broker URL: {url!r}")
+        tls = parsed.scheme == "mqtts"
+        port = parsed.port or (8883 if tls else 1883)
+        return cls(
+            url=url,
+            host=parsed.hostname,
+            port=port,
+            username=parsed.username,
+            password=parsed.password,
+            tls=tls,
+        )
+
+
+@dataclass(frozen=True)
+class Config:
+    """Fully validated runtime configuration for SCGRep."""
+
+    sensor_centre_id: str
+    brokers: list[BrokerConfig]
+    subscription_topics: list[str]
+    replay_centre_ids: list[str]
+    replay_urls: list[str]
+    redis_url: str
+    metrics_endpoint: str
+    metrics_port: int
+    time_lag: int
+    test_interval: int
+    subscriber_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+
+    @property
+    def redis_expiry(self) -> int:
+        """Seconds after which stored broker messages expire from Redis."""
+        return self.time_lag + self.test_interval + 60
+
+    @property
+    def replay_targets(self) -> list[tuple[str, str]]:
+        """(centre_id, url) pairs for every Global Replay service under test."""
+        return list(zip(self.replay_centre_ids, self.replay_urls))
+
+    def replay_wildcard_topics(self) -> list[str]:
+        """MQTT topics to subscribe to for asynchronous replay responses."""
+        return [
+            f"replay/a/wis2/{centre_id}/{self.subscriber_id}/#"
+            for centre_id in self.replay_centre_ids
+        ]
+
+    @classmethod
+    def from_env(cls, env: dict[str, str] | None = None) -> "Config":
+        env = os.environ if env is None else env
+
+        sensor_centre_id = env.get("SENSOR_CENTRE_ID", "").strip()
+        if not sensor_centre_id:
+            raise ConfigError("SENSOR_CENTRE_ID is required")
+
+        subscription_topics = _split(env.get("SUBSCRIPTION_TOPICS", ""))
+        if not subscription_topics:
+            raise ConfigError("SUBSCRIPTION_TOPICS is required")
+
+        broker_urls = _split(
+            env.get(
+                "GLOBAL_BROKER_URLS",
+                "mqtts://everyone:everyone@globalbroker.meteo.fr:8883",
+            )
+        )
+        if not broker_urls:
+            raise ConfigError("GLOBAL_BROKER_URLS must contain at least one URL")
+        brokers = [BrokerConfig.from_url(url) for url in broker_urls]
+
+        replay_centre_ids = _split(
+            env.get("GLOBAL_REPLAY_CENTRE_IDS", "ca-eccc-msc-global-replay")
+        )
+        replay_urls = _split(
+            env.get("GLOBAL_REPLAY_URLS", "https://wis2-grep.weather.gc.ca")
+        )
+        if len(replay_centre_ids) != len(replay_urls):
+            raise ConfigError(
+                "GLOBAL_REPLAY_CENTRE_IDS and GLOBAL_REPLAY_URLS must have the "
+                f"same number of entries ({len(replay_centre_ids)} != "
+                f"{len(replay_urls)})"
+            )
+        if not replay_centre_ids:
+            raise ConfigError("At least one Global Replay service must be configured")
+        # Normalise: strip trailing slashes so URL joins are predictable.
+        replay_urls = [url.rstrip("/") for url in replay_urls]
+
+        try:
+            time_lag = int(env.get("TIME_LAG", "300"))
+            test_interval = int(env.get("TEST_INTERVAL", "300"))
+            metrics_port = int(env.get("METRICS_PORT", "8000"))
+        except ValueError as exc:
+            raise ConfigError(f"Invalid numeric configuration: {exc}") from exc
+        if test_interval <= 0:
+            raise ConfigError("TEST_INTERVAL must be positive")
+        if time_lag < 0:
+            raise ConfigError("TIME_LAG must not be negative")
+
+        metrics_endpoint = env.get("METRICS_ENDPOINT", "/metrics").strip()
+        if not metrics_endpoint.startswith("/"):
+            metrics_endpoint = "/" + metrics_endpoint
+
+        return cls(
+            sensor_centre_id=sensor_centre_id,
+            brokers=brokers,
+            subscription_topics=subscription_topics,
+            replay_centre_ids=replay_centre_ids,
+            replay_urls=replay_urls,
+            redis_url=env.get("REDIS_URL", "redis:6379").strip(),
+            metrics_endpoint=metrics_endpoint,
+            metrics_port=metrics_port,
+            time_lag=time_lag,
+            test_interval=test_interval,
+        )

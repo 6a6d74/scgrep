@@ -1,0 +1,39 @@
+# SCGRep deployment.
+#
+# Redis is assumed to already be running as a service named "redis" on a shared
+# docker bridge network (per the deployment brief). Set the external network
+# name below to match your environment, or use the "dev" profile to spin up a
+# throwaway Redis for local testing:
+#
+#   docker compose up --build                 # joins the external network
+#   docker compose --profile dev up --build   # self-contained (local redis)
+
+services:
+  scgrep:
+    build: .
+    image: scgrep:latest
+    container_name: scgrep
+    restart: unless-stopped
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"   # Prometheus metrics (METRICS_PORT)
+    networks:
+      - wis2net
+
+  # Optional local Redis for development only (enable with --profile dev).
+  redis:
+    image: redis:7-alpine
+    container_name: redis
+    profiles: ["dev"]
+    restart: unless-stopped
+    networks:
+      - wis2net
+
+networks:
+  wis2net:
+    # The Redis service is provisioned on an existing bridge network. Mark it
+    # external and set `name:` to that network. For the "dev" profile this same
+    # network is created locally.
+    name: wis2net
+    external: false
