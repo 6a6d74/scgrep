@@ -72,21 +72,28 @@ All configuration is via environment variables (see `.env.example`).
 
 ### Docker
 
-Redis is expected to already run as a service named `redis` on a shared docker
-bridge network (set its name in `docker-compose.yml`):
+Redis is expected to already run as a service named `redis` on the shared
+`jztnet` docker bridge network (an existing/external network). The full
+configuration is set inline in the `environment:` block of
+`docker-compose.yml`, so no extra setup is needed to start:
 
 ```bash
-cp .env.example .env      # then edit
 docker compose up --build
 ```
 
-For a self-contained local run (starts a throwaway Redis too):
+The container is named `scgrep` by default.
+
+Edit the values in the `environment:` block of `docker-compose.yml` for your
+deployment. Those values take precedence over an optional `.env` file, which may
+supply additional or overridable settings (for example `LOG_LEVEL`):
 
 ```bash
-docker compose --profile dev up --build
+cp .env.example .env      # optional; edit as needed
+docker compose up --build
 ```
 
-The container is named `scgrep` by default.
+To join a different network, change the `jztnet` entry under `networks:` (set
+`name:` to your network and keep `external: true`).
 
 ### Locally (development)
 
