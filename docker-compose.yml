@@ -4,6 +4,10 @@
 # docker bridge network (per the deployment brief). SCGRep joins that existing
 # external network and reaches Redis at redis:6379.
 #
+# Because Redis is external to this project, `depends_on` cannot gate on it;
+# SCGRep instead waits for Redis to become reachable on startup (see the
+# REDIS_STARTUP_TIMEOUT setting).
+#
 #   docker compose up --build
 
 services:

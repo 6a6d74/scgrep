@@ -66,6 +66,7 @@ All configuration is via environment variables (see `.env.example`).
 | `METRICS_PORT` | `8000` | Port for the metrics HTTP server. |
 | `TIME_LAG` | `300` | Seconds after publication before messages are expected to be replayable. |
 | `TEST_INTERVAL` | `300` | Seconds between test cycles. |
+| `REDIS_STARTUP_TIMEOUT` | `60` | Seconds to wait for Redis to become reachable on startup before giving up. |
 | `LOG_LEVEL` | `INFO` | Python log level. |
 
 ## Running

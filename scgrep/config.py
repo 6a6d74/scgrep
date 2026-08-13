@@ -61,6 +61,7 @@ class Config:
     metrics_port: int
     time_lag: int
     test_interval: int
+    redis_startup_timeout: int = 60
     subscriber_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @property
@@ -123,6 +124,7 @@ class Config:
             time_lag = int(env.get("TIME_LAG", "300"))
             test_interval = int(env.get("TEST_INTERVAL", "300"))
             metrics_port = int(env.get("METRICS_PORT", "8000"))
+            redis_startup_timeout = int(env.get("REDIS_STARTUP_TIMEOUT", "60"))
         except ValueError as exc:
             raise ConfigError(f"Invalid numeric configuration: {exc}") from exc
         if test_interval <= 0:
@@ -145,4 +147,5 @@ class Config:
             metrics_port=metrics_port,
             time_lag=time_lag,
             test_interval=test_interval,
+            redis_startup_timeout=redis_startup_timeout,
         )

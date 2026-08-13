@@ -27,6 +27,35 @@ def _configure_logging() -> None:
     )
 
 
+def _wait_for_redis(
+    store: RedisStore, url: str, timeout: int, interval: float = 2.0
+) -> bool:
+    """Block until Redis answers a ping or ``timeout`` seconds elapse.
+
+    Redis is provisioned separately (there is no ``depends_on`` to gate on), so
+    on startup it may not be ready yet. Retry rather than exit immediately.
+    """
+    deadline = time.monotonic() + timeout
+    attempt = 0
+    while True:
+        attempt += 1
+        try:
+            store.ping()
+            logger.info("Connected to Redis at %s", url)
+            return True
+        except Exception as exc:  # noqa: BLE001 - any connection error retries
+            if time.monotonic() >= deadline:
+                logger.error(
+                    "Could not reach Redis at %s after %ds: %s", url, timeout, exc
+                )
+                return False
+            logger.warning(
+                "Redis at %s not ready (attempt %d): %s; retrying in %.0fs",
+                url, attempt, exc, interval,
+            )
+            time.sleep(interval)
+
+
 class Scheduler:
     """Runs test cycles every ``TEST_INTERVAL`` seconds until stopped.
 
@@ -88,11 +117,7 @@ def main() -> int:
     store = RedisStore(
         config.redis_url, config.redis_expiry, config.subscription_topics
     )
-    try:
-        store.ping()
-        logger.info("Connected to Redis at %s", config.redis_url)
-    except Exception:  # noqa: BLE001
-        logger.exception("Could not reach Redis at %s", config.redis_url)
+    if not _wait_for_redis(store, config.redis_url, config.redis_startup_timeout):
         return 3
 
     registry = ReplayRegistry()
