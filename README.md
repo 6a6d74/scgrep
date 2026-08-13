@@ -114,3 +114,7 @@ checks for `numberMatched`).
 The Global Replay Feature API exposes a single collection
 (`wis2-notification-messages`) which in practice also carries WIS2 Monitoring
 Event Messages.
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
