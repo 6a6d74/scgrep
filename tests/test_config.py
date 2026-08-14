@@ -51,6 +51,19 @@ def test_replay_brokers_multiple():
     assert [b.host for b in cfg.replay_brokers] == ["one.example", "two.example"]
 
 
+def test_replay_brokers_blank_falls_back_to_global_brokers():
+    env = dict(
+        BASE_ENV,
+        GLOBAL_BROKER_URLS="mqtts://gb1.example:8883,mqtts://gb2.example:8883",
+        GLOBAL_REPLAY_BROKER_URLS="",
+    )
+    cfg = Config.from_env(env)
+    assert [(b.host, b.port) for b in cfg.replay_brokers] == [
+        (b.host, b.port) for b in cfg.brokers
+    ]
+    assert [b.host for b in cfg.replay_brokers] == ["gb1.example", "gb2.example"]
+
+
 def test_subscriber_id_is_uuid_like():
     cfg = Config.from_env(dict(BASE_ENV))
     assert len(cfg.subscriber_id) == 36

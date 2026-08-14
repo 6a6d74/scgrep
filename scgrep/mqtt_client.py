@@ -116,8 +116,8 @@ class MqttManager:
             client.username_pw_set(broker.username, broker.password)
         if broker.tls:
             if tls_insecure:
-                # The preoperational GRep broker currently has an expired
-                # certificate, so verification is disabled for it.
+                # TLS verification disabled (e.g. a replay broker whose
+                # certificate has lapsed).
                 client.tls_set(cert_reqs=ssl.CERT_NONE)
                 client.tls_insecure_set(True)
             else:
@@ -162,23 +162,46 @@ class MqttManager:
         self._clients.append(client)
 
     def start(self) -> None:
-        """Connect to the Global Brokers and the replay broker(s)."""
-        # Global Brokers: test topics (baseline).
-        for broker in self._config.brokers:
-            client = self._build_client(
-                broker, self._config.subscription_topics, role="Global Broker"
-            )
-            self._connect(client, broker)
+        """Connect to each unique broker with the union of its subscriptions.
 
-        # Replay brokers: replay wildcard topics (async fetch delivery).
-        for replay_broker in self._config.replay_brokers:
-            client = self._build_client(
-                replay_broker,
-                self._config.replay_wildcard_topics(),
-                role="Replay broker",
-                tls_insecure=self._config.replay_broker_tls_insecure,
+        Global Brokers carry the test topics (baseline); replay brokers carry the
+        replay wildcards. When ``GLOBAL_REPLAY_BROKER_URLS`` is blank the replay
+        brokers *are* the Global Brokers, so a broker serving both roles becomes a
+        single client subscribed to both sets of topics (one connection, no
+        duplicate client id).
+        """
+        # Accumulate a plan per unique broker (host, port).
+        plans: dict[tuple[str, int], dict] = {}
+
+        def plan_for(broker: BrokerConfig) -> dict:
+            return plans.setdefault(
+                (broker.host, broker.port),
+                {"broker": broker, "subs": [], "roles": [], "tls_insecure": False},
             )
-            self._connect(client, replay_broker)
+
+        for broker in self._config.brokers:
+            plan = plan_for(broker)
+            plan["subs"].extend(self._config.subscription_topics)
+            plan["roles"].append("Global Broker")
+
+        for broker in self._config.replay_brokers:
+            plan = plan_for(broker)
+            plan["subs"].extend(self._config.replay_wildcard_topics())
+            plan["roles"].append("Replay broker")
+            # A broker used *only* for replay honours the replay TLS setting; a
+            # Global Broker keeps normal verification even if it also serves
+            # replays.
+            if "Global Broker" not in plan["roles"]:
+                plan["tls_insecure"] = self._config.replay_broker_tls_insecure
+
+        for plan in plans.values():
+            subscriptions = list(dict.fromkeys(plan["subs"]))
+            role = " + ".join(dict.fromkeys(plan["roles"]))
+            client = self._build_client(
+                plan["broker"], subscriptions, role=role,
+                tls_insecure=plan["tls_insecure"],
+            )
+            self._connect(client, plan["broker"])
 
     def stop(self) -> None:
         for client in self._clients:

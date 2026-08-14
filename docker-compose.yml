@@ -100,6 +100,10 @@ services:
       # connected to the GRep's local broker and republishes them, so we subscribe
       # for replays there. (The GRep's own broker,
       # mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883, also works.)
+      #
+      # OPERATIONAL CASE: once replays are routed via the operational Global
+      # Brokers, leave this BLANK ("") — SCGRep then subscribes for replays on the
+      # GLOBAL_BROKER_URLS brokers themselves (no separate replay broker needed).
       GLOBAL_REPLAY_BROKER_URLS: "mqtts://everyone:everyone@gb.wis2dev.io:8883"
       # The test Global Broker presents a valid certificate, so TLS is verified.
       # (Set to "true" only if a replay broker's certificate lapses.)

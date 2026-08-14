@@ -87,7 +87,14 @@ Splitting the two roles matters because, in the preoperational phase, the Global
 Replay service publishes replays to its own broker (or the WIS2 test Global
 Broker) rather than the operational Global Brokers — so the broker used for
 replays is configured separately (and can skip TLS verification if its
-certificate has lapsed).
+certificate has lapsed). In the **operational** case, where replays *are* routed
+via the Global Brokers, `GLOBAL_REPLAY_BROKER_URLS` is left **blank** and the
+replay brokers default to the Global Brokers.
+
+`MqttManager` builds **one client per unique broker** with the union of the
+subscriptions it serves. So a broker that is both a Global Broker and a replay
+broker (the blank case) is a single connection subscribed to both the test topics
+and the replay wildcards — no duplicate client id.
 
 `MessageHandler.on_message` runs on paho's network thread and routes each message:
 

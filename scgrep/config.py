@@ -141,16 +141,19 @@ class Config:
         # Broker(s) on which the Global Replay service delivers async replay
         # messages. In the preoperational phase this is a single broker (the GRep
         # instance's own broker or the WIS2 test Global Broker) rather than the
-        # operational Global Brokers.
+        # operational Global Brokers. Leave blank to receive replays via the
+        # Global Brokers themselves (GLOBAL_BROKER_URLS) — the operational case.
         replay_broker_urls = _split(
             env.get(
                 "GLOBAL_REPLAY_BROKER_URLS",
                 "mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883",
             )
         )
-        if not replay_broker_urls:
-            raise ConfigError("GLOBAL_REPLAY_BROKER_URLS must contain at least one URL")
-        replay_brokers = [BrokerConfig.from_url(url) for url in replay_broker_urls]
+        if replay_broker_urls:
+            replay_brokers = [BrokerConfig.from_url(url) for url in replay_broker_urls]
+        else:
+            # Blank: replays arrive on the operational Global Brokers.
+            replay_brokers = list(brokers)
         replay_broker_tls_insecure = env.get(
             "GLOBAL_REPLAY_BROKER_TLS_INSECURE", "false"
         ).strip().lower() in ("1", "true", "yes", "on")
