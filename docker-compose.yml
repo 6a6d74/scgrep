@@ -84,9 +84,9 @@ services:
         required: false
     environment:
       SENSOR_CENTRE_ID: io-wis2dev-myinstance-sensor-centre-global-replay
-      # Temporarily a broad wildcard to exercise the replay path during testing;
+      # Temporarily a wildcard to exercise the replay path during testing;
       # normally a curated list of ~10-20 notification and event topics.
-      SUBSCRIPTION_TOPICS: "cache/a/wis2/+/data/#"
+      SUBSCRIPTION_TOPICS: "cache/a/wis2/us-noaa-nws/#"
       GLOBAL_BROKER_URLS: "mqtts://everyone:everyone@globalbroker.meteo.fr:8883"
       GLOBAL_REPLAY_CENTRE_IDS: ca-eccc-msc-global-replay
       GLOBAL_REPLAY_URLS: "https://wis2-grep.weather.gc.ca"
