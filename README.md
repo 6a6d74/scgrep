@@ -15,6 +15,9 @@ retrieval paths.
 
 ## How it works
 
+> For a component-by-component description of the codebase and the Docker stack,
+> see **[ARCHITECTURE.md](ARCHITECTURE.md)**.
+
 1. **On start-up** SCGRep generates a unique subscriber UUID and connects to
    every configured Global Broker, subscribing to:
    - the topics under test (`SUBSCRIPTION_TOPICS`), and
