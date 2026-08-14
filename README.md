@@ -93,7 +93,7 @@ the tool is to watch **how large** the difference is.
   on the broker SCGRep subscribes to within the deadline. This can be a genuine
   timeliness failure, or a configuration/coverage issue — e.g. during the
   preoperational phase the replay service may publish replays to its own broker
-  rather than the operational Global Brokers (see `GLOBAL_REPLAY_BROKER_URL`).
+  rather than the operational Global Brokers (see `GLOBAL_REPLAY_BROKER_URLS`).
 - **`response_invalid_format_flag` set** — the response was malformed, so its
   count is unreliable regardless of the number.
 
@@ -112,7 +112,7 @@ All configuration is via environment variables (see `.env.example`).
 | `GLOBAL_BROKER_URLS` | `mqtts://everyone:everyone@globalbroker.meteo.fr:8883` | Comma-delimited Global Broker MQTT URLs. |
 | `GLOBAL_REPLAY_CENTRE_IDS` | `ca-eccc-msc-global-replay` | Comma-delimited centre-ids under test. |
 | `GLOBAL_REPLAY_URLS` | `https://wis2-grep.weather.gc.ca` | Comma-delimited Global Replay URLs (same length/order as centre-ids). |
-| `GLOBAL_REPLAY_BROKER_URL` | `mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883` | Broker on which async replay messages are available. The operational Global Brokers do not yet republish this GRep's messages; the WIS2 test Global Broker (`gb.wis2dev.io:8883`, used in the Compose deployment) does, and the GRep instance's own broker (the default) also works. Only supports a **single** GRep instance. |
+| `GLOBAL_REPLAY_BROKER_URLS` | `mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883` | Comma-delimited broker(s) on which async replay messages are available (one during the preoperational phase). The operational Global Brokers do not yet republish this GRep's messages; the WIS2 test Global Broker (`gb.wis2dev.io:8883`, used in the Compose deployment) does, and the GRep instance's own broker (the default) also works. Only supports a **single** GRep instance. |
 | `GLOBAL_REPLAY_BROKER_TLS_INSECURE` | `false` | Skip TLS verification for the replay broker. Set `true` only if its certificate lapses. |
 | `REDIS_URL` | `redis:6379` | Redis host:port (or a `redis://` URL). |
 | `METRICS_ENDPOINT` | `/metrics` | Path where metrics are served. |

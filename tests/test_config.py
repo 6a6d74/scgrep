@@ -20,24 +20,35 @@ def test_defaults_applied():
     assert cfg.redis_expiry == 300 + 300 + 60
 
 
-def test_replay_broker_default():
+def test_replay_brokers_default():
     cfg = Config.from_env(dict(BASE_ENV))
-    assert cfg.replay_broker.host == "wis2-grep.weather.gc.ca"
-    assert cfg.replay_broker.port == 8883
-    assert cfg.replay_broker.tls is True
+    assert len(cfg.replay_brokers) == 1
+    assert cfg.replay_brokers[0].host == "wis2-grep.weather.gc.ca"
+    assert cfg.replay_brokers[0].port == 8883
+    assert cfg.replay_brokers[0].tls is True
     assert cfg.replay_broker_tls_insecure is False
 
 
-def test_replay_broker_override():
+def test_replay_brokers_override_single():
     env = dict(
         BASE_ENV,
-        GLOBAL_REPLAY_BROKER_URL="mqtts://u:p@replay.example:8883",
+        GLOBAL_REPLAY_BROKER_URLS="mqtts://u:p@replay.example:8883",
         GLOBAL_REPLAY_BROKER_TLS_INSECURE="true",
     )
     cfg = Config.from_env(env)
-    assert cfg.replay_broker.host == "replay.example"
-    assert cfg.replay_broker.username == "u"
+    assert len(cfg.replay_brokers) == 1
+    assert cfg.replay_brokers[0].host == "replay.example"
+    assert cfg.replay_brokers[0].username == "u"
     assert cfg.replay_broker_tls_insecure is True
+
+
+def test_replay_brokers_multiple():
+    env = dict(
+        BASE_ENV,
+        GLOBAL_REPLAY_BROKER_URLS="mqtts://one.example:8883, mqtts://two.example:8883",
+    )
+    cfg = Config.from_env(env)
+    assert [b.host for b in cfg.replay_brokers] == ["one.example", "two.example"]
 
 
 def test_subscriber_id_is_uuid_like():

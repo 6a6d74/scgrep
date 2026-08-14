@@ -61,7 +61,7 @@ class Config:
     metrics_port: int
     time_lag: int
     test_interval: int
-    replay_broker: BrokerConfig
+    replay_brokers: list[BrokerConfig]
     redis_startup_timeout: int = 60
     replay_broker_tls_insecure: bool = False
     subscriber_id: str = field(default_factory=lambda: str(uuid.uuid4()))
@@ -138,15 +138,19 @@ class Config:
         if not metrics_endpoint.startswith("/"):
             metrics_endpoint = "/" + metrics_endpoint
 
-        # Broker on which the Global Replay service delivers async replay
-        # messages. In the preoperational phase this is the GRep instance's own
-        # broker rather than the operational Global Brokers.
-        replay_broker = BrokerConfig.from_url(
+        # Broker(s) on which the Global Replay service delivers async replay
+        # messages. In the preoperational phase this is a single broker (the GRep
+        # instance's own broker or the WIS2 test Global Broker) rather than the
+        # operational Global Brokers.
+        replay_broker_urls = _split(
             env.get(
-                "GLOBAL_REPLAY_BROKER_URL",
+                "GLOBAL_REPLAY_BROKER_URLS",
                 "mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883",
-            ).strip()
+            )
         )
+        if not replay_broker_urls:
+            raise ConfigError("GLOBAL_REPLAY_BROKER_URLS must contain at least one URL")
+        replay_brokers = [BrokerConfig.from_url(url) for url in replay_broker_urls]
         replay_broker_tls_insecure = env.get(
             "GLOBAL_REPLAY_BROKER_TLS_INSECURE", "false"
         ).strip().lower() in ("1", "true", "yes", "on")
@@ -162,7 +166,7 @@ class Config:
             metrics_port=metrics_port,
             time_lag=time_lag,
             test_interval=test_interval,
-            replay_broker=replay_broker,
+            replay_brokers=replay_brokers,
             redis_startup_timeout=redis_startup_timeout,
             replay_broker_tls_insecure=replay_broker_tls_insecure,
         )

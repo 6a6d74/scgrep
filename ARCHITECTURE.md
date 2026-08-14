@@ -78,9 +78,10 @@ replay topics, and derives `redis_expiry = TIME_LAG + TEST_INTERVAL + 60`.
 
 - **Global Brokers** (`GLOBAL_BROKER_URLS`) — subscribe to the topics under test
   (`SUBSCRIPTION_TOPICS`) to build the baseline.
-- **Replay broker** (`GLOBAL_REPLAY_BROKER_URL`) — subscribe to the per-subscriber
-  replay wildcard topics `replay/a/wis2/<centre-id>/<subscriber-id>/#`, on which
-  the Global Replay service delivers asynchronous replay messages.
+- **Replay broker(s)** (`GLOBAL_REPLAY_BROKER_URLS`, comma-delimited; one during
+  the preoperational phase) — subscribe to the per-subscriber replay wildcard
+  topics `replay/a/wis2/<centre-id>/<subscriber-id>/#`, on which the Global Replay
+  service delivers asynchronous replay messages.
 
 Splitting the two roles matters because, in the preoperational phase, the Global
 Replay service publishes replays to its own broker (or the WIS2 test Global

@@ -62,10 +62,11 @@ class MqttManager:
 
     * **Global Brokers** (``GLOBAL_BROKER_URLS``) — subscribe to the test topics
       to build the baseline in Redis.
-    * **Replay broker** (``GLOBAL_REPLAY_BROKER_URL``) — subscribe to the replay
-      wildcard topics on which the Global Replay service delivers async replay
-      messages. In the preoperational phase this is the GRep instance's own
-      broker rather than the operational Global Brokers.
+    * **Replay broker(s)** (``GLOBAL_REPLAY_BROKER_URLS``) — subscribe to the
+      replay wildcard topics on which the Global Replay service delivers async
+      replay messages. In the preoperational phase this is a single broker (the
+      GRep instance's own broker or the WIS2 test Global Broker) rather than the
+      operational Global Brokers.
     """
 
     def __init__(self, config: Config, on_message) -> None:
@@ -134,7 +135,7 @@ class MqttManager:
         self._clients.append(client)
 
     def start(self) -> None:
-        """Connect to the Global Brokers and the replay broker."""
+        """Connect to the Global Brokers and the replay broker(s)."""
         # Global Brokers: test topics (baseline).
         for broker in self._config.brokers:
             client = self._build_client(
@@ -142,15 +143,15 @@ class MqttManager:
             )
             self._connect(client, broker)
 
-        # Replay broker: replay wildcard topics (async fetch delivery).
-        replay_broker = self._config.replay_broker
-        client = self._build_client(
-            replay_broker,
-            self._config.replay_wildcard_topics(),
-            role="Replay broker",
-            tls_insecure=self._config.replay_broker_tls_insecure,
-        )
-        self._connect(client, replay_broker)
+        # Replay brokers: replay wildcard topics (async fetch delivery).
+        for replay_broker in self._config.replay_brokers:
+            client = self._build_client(
+                replay_broker,
+                self._config.replay_wildcard_topics(),
+                role="Replay broker",
+                tls_insecure=self._config.replay_broker_tls_insecure,
+            )
+            self._connect(client, replay_broker)
 
     def stop(self) -> None:
         for client in self._clients:
