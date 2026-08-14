@@ -1,0 +1,14 @@
+# Auto-load dashboard JSON files from this directory.
+apiVersion: 1
+
+providers:
+  - name: scgrep
+    orgId: 1
+    folder: ""
+    type: file
+    disableDeletion: false
+    allowUiUpdates: true
+    updateIntervalSeconds: 30
+    options:
+      path: /etc/grafana/provisioning/dashboards
+      foldersFromFilesStructure: false

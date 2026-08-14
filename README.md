@@ -189,8 +189,11 @@ The Compose stack already includes **Prometheus** and **Grafana**, pre-wired:
 - Prometheus: `http://localhost:9090` — scrapes `scgrep:8000` (config in
   `prometheus/prometheus.yml`).
 - Grafana: `http://localhost:3000` (default login `admin` / `admin` — change it)
-  — the Prometheus datasource is auto-provisioned
-  (`grafana/provisioning/datasources/`), so you can build dashboards immediately.
+  — the Prometheus datasource **and** a pre-built SCGRep dashboard are
+  auto-provisioned (`grafana/provisioning/`). Open **SCGRep - Global Replay
+  performance** (`/d/scgrep-overview`): five time-aligned panels — totals,
+  baseline−fetched differences, fetch delay, aborted flag, and invalid-format
+  flag — with a shared crosshair across all of them.
 
 Data is persisted in the `prometheus-data` and `grafana-data` volumes.
 
