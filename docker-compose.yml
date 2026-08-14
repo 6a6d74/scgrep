@@ -26,16 +26,31 @@ services:
       - "--providers.file.filename=/etc/traefik/dynamic.yml"
       - "--providers.file.watch=true"
       - "--entrypoints.web.address=:80"
-      # Dashboard enabled but NOT insecure: it is served through the `web`
+      # Redirect all plain HTTP to HTTPS so endpoints are published over TLS.
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      # Dashboard enabled but NOT insecure: it is served through the `websecure`
       # entrypoint behind the basic-auth middleware (see dynamic.yml).
       - "--api.dashboard=true"
+      # Liveness endpoint (/ping) used by the container healthcheck below.
+      - "--ping=true"
     ports:
       - "80:80"
+      - "443:443"
     volumes:
       - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
       # Gitignored basic-auth credentials; create from the example first:
       #   cp traefik/dashboard-users.example traefik/dashboard-users
       - ./traefik/dashboard-users:/etc/traefik/dashboard-users:ro
+    healthcheck:
+      # The distroless Traefik image ships no shell/curl; use its built-in
+      # healthcheck CLI against the /ping endpoint enabled above.
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
     networks:
       - traefik
 
@@ -76,8 +91,10 @@ services:
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
       METRICS_PORT: "8000"
-      TIME_LAG: "300"
-      TEST_INTERVAL: "300"
+      # Shortened to 60s to speed up testing/iteration. For an operational
+      # deployment these would normally both be 300s.
+      TIME_LAG: "60"
+      TEST_INTERVAL: "60"
     # No published ports: Traefik fronts the metrics endpoint, reaching this
     # container by service name (scgrep:8000) over the shared network.
     healthcheck:

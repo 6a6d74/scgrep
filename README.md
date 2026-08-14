@@ -39,7 +39,7 @@ retrieval paths.
 
 Served by SCGRep at `METRICS_ENDPOINT` (default `/metrics`) on `METRICS_PORT`
 (default `8000`). In the Docker deployment this is fronted by Traefik and
-reachable at `http://<host>/metrics` (see [Running](#running)):
+reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 
 | Metric | Labels | Description |
 | --- | --- | --- |
@@ -91,8 +91,13 @@ Traefik fronts the metrics endpoint; SCGRep does not publish its port directly.
 Traefik reaches it by service name (`scgrep:8000`) over the shared network, using
 the file-provider routing in `traefik/dynamic.yml`. After `docker compose up`:
 
-- Metrics: `http://localhost/metrics` (Traefik `web` entrypoint on `:80`)
-- Traefik dashboard: `http://localhost/dashboard/`, protected by HTTP basic auth.
+- Metrics: `https://localhost/metrics` (Traefik `websecure` entrypoint on `:443`;
+  plain HTTP on `:80` is redirected to HTTPS)
+- Traefik dashboard: `https://localhost/dashboard/`, protected by HTTP basic auth.
+
+TLS is terminated by Traefik using its built-in **self-signed** certificate, so
+clients must skip verification (e.g. `curl -k`, or `insecure_skip_verify` in a
+Prometheus scrape). Supply your own certificate/ACME resolver for production.
 
 Before starting, create the (gitignored) credentials file from the example:
 
@@ -140,7 +145,7 @@ target based on where Prometheus runs relative to the SCGRep stack:
 ```yaml
 scrape_configs:
   # (a) Prometheus runs on the same Compose network ("traefik"): scrape the
-  #     scgrep container directly by service name.
+  #     scgrep container directly by service name (plain HTTP backend, no TLS).
   - job_name: scgrep
     # Metrics change once per test cycle (TEST_INTERVAL, default 300s), so a
     # scrape interval at or below that is plenty.
@@ -149,14 +154,18 @@ scrape_configs:
     static_configs:
       - targets: ["scgrep:8000"]
 
-  # (b) Prometheus runs elsewhere and reaches SCGRep through Traefik on :80.
+  # (b) Prometheus runs elsewhere and reaches SCGRep through Traefik over HTTPS.
+  #     Traefik uses a self-signed certificate, so verification is skipped.
   #     Use the host/IP where the stack is published (host.docker.internal from
   #     another container on Docker Desktop, or the host's LAN address).
   # - job_name: scgrep-via-traefik
+  #   scheme: https
+  #   tls_config:
+  #     insecure_skip_verify: true
   #   scrape_interval: 60s
   #   metrics_path: /metrics
   #   static_configs:
-  #     - targets: ["host.docker.internal:80"]
+  #     - targets: ["host.docker.internal:443"]
 ```
 
 If you run Prometheus as its own container and want it to use option (a),

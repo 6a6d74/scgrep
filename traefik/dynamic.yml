@@ -6,21 +6,25 @@
 
 http:
   routers:
+    # Metrics are published over HTTPS (TLS terminated by Traefik). Plain HTTP
+    # is redirected to HTTPS at the entrypoint level (see docker-compose.yml).
     scgrep:
       entryPoints:
-        - web
+        - websecure
       rule: "PathPrefix(`/metrics`)"
       service: scgrep
+      tls: {}
 
-    # Traefik dashboard/API, served on the same entrypoint and protected by
-    # HTTP basic auth. Reachable at http://<host>/dashboard/
+    # Traefik dashboard/API, served over HTTPS and protected by HTTP basic auth.
+    # Reachable at https://<host>/dashboard/
     dashboard:
       entryPoints:
-        - web
+        - websecure
       rule: "PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
       service: api@internal
       middlewares:
         - dashboard-auth
+      tls: {}
 
   middlewares:
     dashboard-auth:
