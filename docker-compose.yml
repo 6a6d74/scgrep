@@ -43,6 +43,9 @@ services:
       # Gitignored basic-auth credentials; create from the example first:
       #   cp traefik/dashboard-users.example traefik/dashboard-users
       - ./traefik/dashboard-users:/etc/traefik/dashboard-users:ro
+      # Gitignored mkcert TLS certificates (see README). If absent, Traefik falls
+      # back to its self-signed default certificate.
+      - ./traefik/certs:/etc/traefik/certs:ro
     healthcheck:
       # The distroless Traefik image ships no shell/curl; use its built-in
       # healthcheck CLI against the /ping endpoint enabled above.

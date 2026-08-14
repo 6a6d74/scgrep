@@ -15,6 +15,9 @@ env/
 # Traefik dashboard credentials (create from traefik/dashboard-users.example)
 traefik/dashboard-users
 
+# mkcert-generated TLS certificates (machine-specific; generate locally)
+traefik/certs/*.pem
+
 .idea/
 .vscode/
 .DS_Store

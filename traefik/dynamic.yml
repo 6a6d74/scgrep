@@ -43,3 +43,17 @@ http:
         servers:
           # METRICS_PORT on the scgrep service.
           - url: "http://scgrep:8000"
+
+# TLS certificate served for HTTPS. If the mkcert-generated files below are
+# present (see README), Traefik serves them as the default certificate — trusted
+# by any machine that has run `mkcert -install`. If they are absent, Traefik
+# falls back to its built-in self-signed certificate (browser warning).
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/localhost.pem
+      keyFile: /etc/traefik/certs/localhost-key.pem
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/localhost.pem
+        keyFile: /etc/traefik/certs/localhost-key.pem

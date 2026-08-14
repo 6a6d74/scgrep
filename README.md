@@ -125,9 +125,29 @@ the file-provider routing in `traefik/dynamic.yml`. After `docker compose up`:
   plain HTTP on `:80` is redirected to HTTPS)
 - Traefik dashboard: `https://localhost/dashboard/`, protected by HTTP basic auth.
 
-TLS is terminated by Traefik using its built-in **self-signed** certificate, so
-clients must skip verification (e.g. `curl -k`, or `insecure_skip_verify` in a
-Prometheus scrape). Supply your own certificate/ACME resolver for production.
+#### TLS certificate
+
+TLS is terminated by Traefik. For a **warning-free local HTTPS**, generate a
+locally-trusted certificate with [`mkcert`](https://github.com/FiloSottile/mkcert):
+
+```bash
+mkcert -install   # one-time: adds a local CA to your system trust store (needs your password)
+mkcert -cert-file traefik/certs/localhost.pem -key-file traefik/certs/localhost-key.pem \
+       localhost 127.0.0.1 ::1
+docker compose up -d traefik   # reload
+```
+
+Traefik then serves that certificate (see the `tls:` block in
+`traefik/dynamic.yml`), and `https://localhost` is trusted by any machine on
+which `mkcert -install` has been run — no `curl -k` and no browser warning. The
+certificate files live in `traefik/certs/` and are **git-ignored** (they are
+machine-specific; each user generates their own).
+
+If `traefik/certs/` is empty, Traefik falls back to its built-in **self-signed**
+certificate — HTTPS still works, but clients must skip verification (`curl -k`,
+or `insecure_skip_verify` in a Prometheus scrape). Note that `localhost` can
+never have a *publicly*-trusted certificate; for a real deployment, use a proper
+DNS name with an ACME/Let's Encrypt resolver.
 
 Before starting, create the (gitignored) credentials file from the example:
 
@@ -286,10 +306,13 @@ pytest
 
 ## Limitations
 
-SCGRep does **not**: test message filtering beyond datetime and topic; validate
-the schema of returned Notification/Event messages; match messages by `id`
-(it counts only); or deeply validate the OGC API - Features response (it only
-checks for `numberMatched`).
+SCGRep does **not**: 
+
+- test message filtering beyond datetime and topic; 
+- validate the schema of returned Notification/Event messages; 
+- match messages by `id` (it only counts the number of messages return);
+- actually count the messages returned in a synchronous requests (it uses the value of `numberMatched` from the JSON response); 
+- deeply validate the OGC API - Features response (it only checks for `numberMatched`).
 
 The Global Replay Feature API exposes a single collection
 (`wis2-notification-messages`) which in practice also carries WIS2 Monitoring
