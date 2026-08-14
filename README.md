@@ -226,19 +226,20 @@ Global Replay service across the tested topics.
 - **Topic(s)** — the `topic` label, **multi-select** with an **All** option; the
   list is scoped to the selected service.
 
-**Panels** — five stacked time-series panels sharing one time axis and a shared
+**Panels** — six stacked time-series panels sharing one time axis and a shared
 crosshair, so a hover lines up across all of them:
 
 | # | Panel | Series | Reads as |
 | --- | --- | --- | --- |
 | 1 | **Totals** | baseline, `http`, `mqtt` message counts | how many messages each route saw per interval |
 | 2 | **Differences** | `baseline − http`, `baseline − mqtt` | near zero = healthy; drifting away = the service is losing/gaining messages |
-| 3 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
-| 4 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = the fetch exceeded the test period |
-| 5 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
+| 3 | **Differences (%)** | panel 2 as a percentage of the baseline | 0% = perfect match; positive % = the service returned fewer than the baseline (undefined when the baseline is zero) |
+| 4 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
+| 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = the fetch exceeded the test period |
+| 6 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
 
-Because the baseline (`messages_received`) has no `centre_id` label, panels 1 and
-2 filter it by topic only; the `http`/`mqtt` series filter by both service and
+Because the baseline (`messages_received`) has no `centre_id` label, panels 1–3
+filter it by topic only; the `http`/`mqtt` series filter by both service and
 topic. See [Why the baseline and fetch counts differ](#why-the-baseline-and-fetch-counts-differ)
 for how to interpret panels 1 and 2.
 

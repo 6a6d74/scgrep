@@ -3,7 +3,7 @@
   "title": "SCGRep - Global Replay performance",
   "tags": ["scgrep", "wis2"],
   "schemaVersion": 39,
-  "version": 2,
+  "version": 3,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -88,11 +88,35 @@
       ]
     },
     {
-      "id": 3,
+      "id": 6,
       "type": "timeseries",
-      "title": "3. Timeliness - fetch delay",
+      "title": "3. Differences - percentage of baseline",
+      "description": "Panel 2 as a percentage of the baseline: 100 * (received - fetched) / received. 0% is a perfect match; positive = the service returned fewer messages than the baseline. Undefined (no line) when the baseline is zero.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 12 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "auto", "spanNulls": false }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"} / on(report_by, topic) group_left() wmo_wis2_scgrep_messages_received_during_interval_total{topic=~\"$topic\"})", "legendFormat": "received - http (%) - {{topic}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"} / on(report_by, topic) group_left() wmo_wis2_scgrep_messages_received_during_interval_total{topic=~\"$topic\"})", "legendFormat": "received - mqtt (%) - {{topic}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "4. Timeliness - fetch delay",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": {
         "defaults": {
           "unit": "ms",
@@ -112,9 +136,9 @@
     {
       "id": 4,
       "type": "timeseries",
-      "title": "4. Test status - aborted flag",
+      "title": "5. Test status - aborted flag",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 18 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
@@ -136,9 +160,9 @@
     {
       "id": 5,
       "type": "timeseries",
-      "title": "5. Format validation - invalid format flag",
+      "title": "6. Format validation - invalid format flag",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 30 },
       "fieldConfig": {
         "defaults": {
           "unit": "short",
