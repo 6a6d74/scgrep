@@ -43,18 +43,18 @@ flowchart LR
 
   subgraph app["scgrep container"]
     MM[MqttManager] --> MH[MessageHandler]
+    MH --> RR[ReplayRegistry]
+    RR -.->|replay timing| RC
     SCH[Scheduler] --> RC[run_cycle]
     RC --> MET[Prometheus metrics<br/>HTTP server]
   end
 
   GB -->|test topics| MM
   RB -->|replay wildcards| MM
-  MH -->|data messages| RS[(Redis)]
-  MH -->|replay messages| RR[ReplayRegistry]
-  RC -->|baseline ZCOUNT| RS
+  MH -->|baseline + replay messages| RS[(Redis)]
+  RC -->|ZCOUNT baseline + replay| RS
   RC -->|sync fetch| GRF
   RC -->|async POST| GRP
-  RR -.->|replay counts| RC
 
   MET --> TR[Traefik] --> PR[Prometheus] --> GF[Grafana]
 ```
