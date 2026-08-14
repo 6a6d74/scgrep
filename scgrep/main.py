@@ -76,7 +76,9 @@ class Scheduler:
     def run(self) -> None:
         interval = self._config.test_interval
         # First cycle runs after one full interval, once messages have accrued.
-        while not self._stop.wait(interval):
+        if self._stop.wait(interval):
+            return
+        while True:
             started = time.monotonic()
             try:
                 run_cycle(self._config, self._store, self._registry, self._metrics)
@@ -85,12 +87,17 @@ class Scheduler:
             elapsed = time.monotonic() - started
             if elapsed > interval:
                 logger.warning(
-                    "Test cycle took %.1fs, longer than TEST_INTERVAL=%ds",
+                    "Test cycle took %.1fs, longer than TEST_INTERVAL=%ds; "
+                    "starting the next cycle immediately",
                     elapsed, interval,
                 )
+                if self._stop.is_set():
+                    return
+                # No extra wait: the next cycle starts right away.
             else:
-                # Sleep the remainder of the interval before the next cycle.
-                self._stop.wait(interval - elapsed)
+                # Sleep only the remainder so cycles start every TEST_INTERVAL.
+                if self._stop.wait(interval - elapsed):
+                    return
 
 
 def main() -> int:
