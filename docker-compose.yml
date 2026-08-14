@@ -111,10 +111,9 @@ services:
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
       METRICS_PORT: "8000"
-      # Shortened to 60s to speed up testing/iteration. For an operational
-      # deployment these would normally both be 300s.
-      TIME_LAG: "60"
-      TEST_INTERVAL: "60"
+      # Operational values (seconds).
+      TIME_LAG: "300"
+      TEST_INTERVAL: "300"
     # No published ports: Traefik fronts the metrics endpoint, reaching this
     # container by service name (scgrep:8000) over the shared network.
     healthcheck:
