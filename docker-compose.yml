@@ -97,8 +97,9 @@ services:
       # NOTE: this direct-to-GRep-broker approach only works when testing a
       # SINGLE Global Replay instance (one replay broker).
       GLOBAL_REPLAY_BROKER_URL: "mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883"
-      # The GRep broker's TLS certificate is currently expired; skip verification.
-      GLOBAL_REPLAY_BROKER_TLS_INSECURE: "true"
+      # The GRep broker now presents a valid certificate, so TLS is verified.
+      # (Set to "true" only if the broker's certificate lapses again.)
+      GLOBAL_REPLAY_BROKER_TLS_INSECURE: "false"
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
       METRICS_PORT: "8000"

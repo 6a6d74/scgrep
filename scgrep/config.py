@@ -63,7 +63,7 @@ class Config:
     test_interval: int
     replay_broker: BrokerConfig
     redis_startup_timeout: int = 60
-    replay_broker_tls_insecure: bool = True
+    replay_broker_tls_insecure: bool = False
     subscriber_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @property
@@ -148,7 +148,7 @@ class Config:
             ).strip()
         )
         replay_broker_tls_insecure = env.get(
-            "GLOBAL_REPLAY_BROKER_TLS_INSECURE", "true"
+            "GLOBAL_REPLAY_BROKER_TLS_INSECURE", "false"
         ).strip().lower() in ("1", "true", "yes", "on")
 
         return cls(

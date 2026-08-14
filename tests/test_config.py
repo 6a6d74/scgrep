@@ -25,19 +25,19 @@ def test_replay_broker_default():
     assert cfg.replay_broker.host == "wis2-grep.weather.gc.ca"
     assert cfg.replay_broker.port == 8883
     assert cfg.replay_broker.tls is True
-    assert cfg.replay_broker_tls_insecure is True
+    assert cfg.replay_broker_tls_insecure is False
 
 
 def test_replay_broker_override():
     env = dict(
         BASE_ENV,
         GLOBAL_REPLAY_BROKER_URL="mqtts://u:p@replay.example:8883",
-        GLOBAL_REPLAY_BROKER_TLS_INSECURE="false",
+        GLOBAL_REPLAY_BROKER_TLS_INSECURE="true",
     )
     cfg = Config.from_env(env)
     assert cfg.replay_broker.host == "replay.example"
     assert cfg.replay_broker.username == "u"
-    assert cfg.replay_broker_tls_insecure is False
+    assert cfg.replay_broker_tls_insecure is True
 
 
 def test_subscriber_id_is_uuid_like():
