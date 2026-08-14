@@ -137,7 +137,7 @@ def test_async_fetch_receives_messages():
         REPLAY_URL, centre_id, TOPIC, subscriber_id,
         ["globalbroker.meteo.fr:8883"],
         "2026-03-19T12:20:00Z", "2026-03-19T12:25:00Z",
-        deadline_s=0.5, registry=registry, poll_interval=0.02,
+        deadline_s=0.5, registry=registry, baseline=5, poll_interval=0.02,
     )
     assert result.protocol == "mqtt"
     assert result.aborted is False
@@ -160,7 +160,7 @@ def test_async_fetch_aborts_without_messages():
     result = async_fetch(
         REPLAY_URL, centre_id, TOPIC, subscriber_id,
         ["globalbroker.meteo.fr:8883"],
-        "s", "e", deadline_s=0.2, registry=registry, poll_interval=0.02,
+        "s", "e", deadline_s=0.2, registry=registry, baseline=5, poll_interval=0.02,
     )
     assert result.aborted is True
     assert result.messages_fetched == 0
@@ -190,7 +190,58 @@ def test_async_fetch_invalid_metadata_flag():
     result = async_fetch(
         REPLAY_URL, centre_id, TOPIC, subscriber_id,
         ["globalbroker.meteo.fr:8883"],
-        "s", "e", deadline_s=0.3, registry=registry, poll_interval=0.02,
+        "s", "e", deadline_s=0.3, registry=registry, baseline=5, poll_interval=0.02,
     )
     assert result.invalid_format is True
     assert result.messages_fetched == 1
+
+
+@responses.activate
+def test_async_fetch_zero_baseline_uses_http_delay():
+    # With a zero baseline no replay messages are expected: the fetch must not
+    # abort and must report the HTTP response delay, returning promptly.
+    centre_id = "ca-eccc-msc-global-replay"
+    subscriber_id = "uuid-1234"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
+    responses.add(
+        responses.POST, EXEC_URL,
+        json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
+        status=200,
+    )
+    registry = ReplayRegistry()
+    t0 = time.monotonic()
+    result = async_fetch(
+        REPLAY_URL, centre_id, TOPIC, subscriber_id,
+        ["globalbroker.meteo.fr:8883"],
+        "s", "e", deadline_s=5.0, registry=registry, baseline=0, poll_interval=0.02,
+    )
+    elapsed = time.monotonic() - t0
+    assert result.protocol == "mqtt"
+    assert result.aborted is False
+    assert result.messages_fetched == 0
+    assert result.invalid_format is False
+    # HTTP response delay, not the 95% abort value.
+    assert 0 <= result.fetch_delay_ms < 5.0 * 1000
+    # Did not wait for the deadline.
+    assert elapsed < 1.0
+
+
+@responses.activate
+def test_async_fetch_zero_baseline_still_validates_metadata():
+    centre_id = "ca-eccc-msc-global-replay"
+    subscriber_id = "uuid-1234"
+    responses.add(
+        responses.POST, EXEC_URL,
+        json=_valid_metadata("replay/a/wis2/c/uuid/wrong", ["mqtts://globalbroker.meteo.fr:8883"]),
+        status=200,
+    )
+    registry = ReplayRegistry()
+    result = async_fetch(
+        REPLAY_URL, centre_id, TOPIC, subscriber_id,
+        ["globalbroker.meteo.fr:8883"],
+        "s", "e", deadline_s=5.0, registry=registry, baseline=0, poll_interval=0.02,
+    )
+    assert result.aborted is False
+    assert result.messages_fetched == 0
+    assert result.invalid_format is True  # channel outside the subscriber namespace
+    assert result.fetch_delay_ms >= 0

@@ -96,6 +96,7 @@ def async_fetch(
     end_iso: str,
     deadline_s: float,
     registry: ReplayRegistry,
+    baseline: int,
     poll_interval: float = 0.05,
     deadline_at: float | None = None,
 ) -> FetchResult:
@@ -105,6 +106,12 @@ def async_fetch(
     replay messages are not missed. The metadata response is validated, then the
     counter is observed until the deadline; the first-arrival time yields the
     fetch delay and the final count yields ``messages_fetched``.
+
+    ``baseline`` is the number of messages the Sensor Centre received for this
+    topic/window. When it is **zero**, no replay messages are expected, so waiting
+    for MQTT would always time out; instead the fetch reports the time to the
+    first byte of its HTTP (process-execution) response as ``fetch_delay`` and
+    does not abort. When it is non-zero, the wait-for-first-message logic applies.
 
     ``deadline_s`` is 95% of ``TEST_INTERVAL`` (aborted fetch-delay value);
     ``deadline_at`` is an absolute ``time.monotonic()`` stop instant, defaulting
@@ -132,11 +139,13 @@ def async_fetch(
     }
 
     invalid_format = False
+    http_response_at: float | None = None
     try:
         resp = requests.post(
             url, json=payload, headers=_HEADERS,
             timeout=max(0.05, deadline - time.monotonic()),
         )
+        http_response_at = time.monotonic()
         try:
             metadata = resp.json()
         finally:
@@ -147,8 +156,17 @@ def async_fetch(
     except (requests.RequestException, ValueError) as exc:
         logger.warning("mqtt async POST failed for %s (%s): %s", url, topic, exc)
         invalid_format = True
+        if http_response_at is None:
+            http_response_at = time.monotonic()
 
-    # Wait for the first replay message or the deadline.
+    # Zero baseline: no replay messages are expected, so waiting for MQTT would
+    # always abort. Report the HTTP response delay instead and do not abort.
+    if baseline == 0:
+        registry.unregister(expected_channel)
+        fetch_delay_ms = (http_response_at - start) * 1000
+        return FetchResult("mqtt", False, invalid_format, fetch_delay_ms, 0)
+
+    # Non-zero baseline: wait for the first replay message or the deadline.
     while time.monotonic() < deadline:
         _, first = counter.snapshot()
         if first is not None:

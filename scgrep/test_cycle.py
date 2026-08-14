@@ -72,7 +72,7 @@ def run_cycle(
                 futures[ex.submit(
                     async_fetch, replay_url, centre_id, topic, config.subscriber_id,
                     broker_authorities, start_iso, end_iso, deadline_s, registry,
-                    deadline_at=deadline_at,
+                    baselines[topic], deadline_at=deadline_at,
                 )] = (centre_id, topic)
         for future, (centre_id, topic) in futures.items():
             try:
