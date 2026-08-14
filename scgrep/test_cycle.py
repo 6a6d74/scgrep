@@ -30,24 +30,28 @@ def run_cycle(
     with a synchronous and an asynchronous fetch, all in parallel so the cycle
     completes within one ``TEST_INTERVAL``.
 
-    All metrics for the cycle are published together, once the fetches finish.
-    The asynchronous fetch runs until ~95% of the test period, so the baseline
-    and the synchronous (``http``) results are held and published at that same
-    moment as the asynchronous (``mqtt``) results — keeping every metric for the
-    cycle consistent within a single Prometheus scrape.
+    Every metric for the cycle is published together, at exactly 95% of the test
+    period. All fetches share a single absolute deadline anchored to the start of
+    the cycle, and publication is held to that same instant — so the baseline,
+    the synchronous (``http``) results, and the asynchronous (``mqtt``) results
+    all update at once and a single Prometheus scrape sees a consistent set.
     """
     now = time.time() if now is None else now
+    cycle_start = time.monotonic()
     end_epoch = now - config.time_lag
     start_epoch = end_epoch - config.test_interval
     start_iso = epoch_to_iso(start_epoch)
     end_iso = epoch_to_iso(end_epoch)
     deadline_s = 0.95 * config.test_interval
+    # Absolute instant, 95% through the test period, at which all fetches stop
+    # and all metrics are published.
+    deadline_at = cycle_start + deadline_s
     report_by = config.sensor_centre_id
     broker_authorities = [broker_authority(b.url) for b in config.brokers]
 
     logger.info("Running test cycle for window %s .. %s", start_iso, end_iso)
 
-    # Baselines: fast Redis reads, held for publication at the end of the cycle.
+    # Baselines: fast Redis reads, held for publication at the deadline.
     baselines = {
         topic: store.count_messages(topic, start_epoch, end_epoch)
         for topic in config.subscription_topics
@@ -62,11 +66,13 @@ def run_cycle(
         for topic in config.subscription_topics:
             for centre_id, replay_url in config.replay_targets:
                 futures[ex.submit(
-                    sync_fetch, replay_url, topic, start_iso, end_iso, deadline_s
+                    sync_fetch, replay_url, topic, start_iso, end_iso,
+                    deadline_s, deadline_at,
                 )] = (centre_id, topic)
                 futures[ex.submit(
                     async_fetch, replay_url, centre_id, topic, config.subscriber_id,
                     broker_authorities, start_iso, end_iso, deadline_s, registry,
+                    deadline_at=deadline_at,
                 )] = (centre_id, topic)
         for future, (centre_id, topic) in futures.items():
             try:
@@ -74,8 +80,14 @@ def run_cycle(
             except Exception:  # noqa: BLE001 - one failure must not sink the cycle
                 logger.exception("A fetch task raised an unexpected error")
 
-    # Publish everything together, now that the async fetches have reached ~95%
-    # of the test period, so all metrics for this cycle update at the same time.
+    # Hold publication to exactly 95% of the test period. Fetches normally run
+    # right up to this instant; this also guards the case where they finish early
+    # (e.g. errors), so every cycle publishes at the same point.
+    remaining = deadline_at - time.monotonic()
+    if remaining > 0:
+        time.sleep(remaining)
+
+    # Publish everything together so all metrics for this cycle update at once.
     for topic, count in baselines.items():
         metrics.messages_received.labels(report_by=report_by, topic=topic).set(count)
     for centre_id, topic, result in fetch_results:

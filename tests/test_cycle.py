@@ -134,3 +134,27 @@ def test_all_metrics_published_together_after_fetches(monkeypatch):
     assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 5
     mqtt_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
     assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 7
+
+
+def test_publication_held_until_95pct_even_when_fetches_finish_early(monkeypatch):
+    """Metrics publish at ~95% of the test period even if the fetches return
+    instantly — publication is anchored to the cycle deadline, not fetch timing."""
+    cfg = Config.from_env(dict(ENV, TEST_INTERVAL="1"))  # deadline = 0.95s
+    client = fakeredis.FakeRedis(decode_responses=True)
+    store = RedisStore("redis:6379", cfg.redis_expiry, cfg.subscription_topics, client=client)
+    registry = ReplayRegistry()
+    metrics = Metrics()
+
+    monkeypatch.setattr(tc, "sync_fetch", lambda *a, **k: FetchResult("http", False, False, 1.0, 5))
+    monkeypatch.setattr(tc, "async_fetch", lambda *a, **k: FetchResult("mqtt", False, False, 2.0, 7))
+
+    t0 = time.monotonic()
+    run_cycle(cfg, store, registry, metrics, now=time.time())
+    elapsed = time.monotonic() - t0
+
+    # Held until ~95% of the 1s test period despite instant fetches.
+    assert elapsed >= 0.9, elapsed
+    http_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="http")
+    mqtt_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
+    assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 5
+    assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 7

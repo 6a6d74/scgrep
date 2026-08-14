@@ -38,22 +38,28 @@ def sync_fetch(
     start_iso: str,
     end_iso: str,
     deadline_s: float,
+    deadline_at: float | None = None,
 ) -> FetchResult:
     """Synchronous fetch via OGC API - Features.
 
-    ``deadline_s`` is 95% of ``TEST_INTERVAL``. If no response first byte is
-    received within it, the test is aborted.
+    ``deadline_s`` is 95% of ``TEST_INTERVAL`` and sets the aborted fetch-delay
+    value. ``deadline_at`` is an absolute ``time.monotonic()`` instant at which
+    to stop; when omitted it defaults to ``now + deadline_s``. Passing a shared
+    ``deadline_at`` lets every fetch in a cycle stop at the same moment.
     """
     url = f"{replay_url}/collections/wis2-notification-messages/items"
     params = {"datetime": f"{start_iso}/{end_iso}", "topic": topic}
     aborted_delay_ms = deadline_s * 1000
 
     start = time.monotonic()
+    if deadline_at is None:
+        deadline_at = start + deadline_s
+    timeout = max(0.05, deadline_at - start)
     try:
         # stream=True returns as soon as response headers arrive, giving a
         # good proxy for time-to-first-byte; timeout bounds it at the deadline.
         resp = requests.get(
-            url, params=params, headers=_HEADERS, stream=True, timeout=deadline_s
+            url, params=params, headers=_HEADERS, stream=True, timeout=timeout
         )
     except requests.RequestException as exc:
         logger.warning("http sync fetch aborted for %s (%s): %s", url, topic, exc)
@@ -91,6 +97,7 @@ def async_fetch(
     deadline_s: float,
     registry: ReplayRegistry,
     poll_interval: float = 0.05,
+    deadline_at: float | None = None,
 ) -> FetchResult:
     """Asynchronous fetch via OGC API - Processes, with MQTT-delivered messages.
 
@@ -98,6 +105,11 @@ def async_fetch(
     replay messages are not missed. The metadata response is validated, then the
     counter is observed until the deadline; the first-arrival time yields the
     fetch delay and the final count yields ``messages_fetched``.
+
+    ``deadline_s`` is 95% of ``TEST_INTERVAL`` (aborted fetch-delay value);
+    ``deadline_at`` is an absolute ``time.monotonic()`` stop instant, defaulting
+    to ``now + deadline_s``. A shared ``deadline_at`` makes every fetch in a cycle
+    stop simultaneously.
     """
     # The replay service assigns a single subscriber-scoped channel (a wildcard,
     # e.g. replay/a/wis2/<centre>/<sub>/#) shared across topics and brokers, so
@@ -108,7 +120,7 @@ def async_fetch(
     counter = registry.register(expected_channel)
     aborted_delay_ms = deadline_s * 1000
     start = time.monotonic()
-    deadline = start + deadline_s
+    deadline = start + deadline_s if deadline_at is None else deadline_at
 
     url = f"{replay_url}/processes/wis2-grep-subscriber/execution"
     payload = {
@@ -122,7 +134,8 @@ def async_fetch(
     invalid_format = False
     try:
         resp = requests.post(
-            url, json=payload, headers=_HEADERS, timeout=deadline_s
+            url, json=payload, headers=_HEADERS,
+            timeout=max(0.05, deadline - time.monotonic()),
         )
         try:
             metadata = resp.json()
