@@ -127,6 +127,108 @@ export SENSOR_CENTRE_ID=... SUBSCRIPTION_TOPICS=... REDIS_URL=localhost:6379
 python -m scgrep
 ```
 
+## Scraping with Prometheus
+
+SCGRep exposes a standard Prometheus text endpoint, so any Prometheus instance
+can scrape it. Add a scrape job pointing at the metrics endpoint.
+
+### 1. Add a scrape job
+
+Edit your `prometheus.yml` and add an entry under `scrape_configs`. Choose the
+target based on where Prometheus runs relative to the SCGRep stack:
+
+```yaml
+scrape_configs:
+  # (a) Prometheus runs on the same Compose network ("traefik"): scrape the
+  #     scgrep container directly by service name.
+  - job_name: scgrep
+    # Metrics change once per test cycle (TEST_INTERVAL, default 300s), so a
+    # scrape interval at or below that is plenty.
+    scrape_interval: 60s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["scgrep:8000"]
+
+  # (b) Prometheus runs elsewhere and reaches SCGRep through Traefik on :80.
+  #     Use the host/IP where the stack is published (host.docker.internal from
+  #     another container on Docker Desktop, or the host's LAN address).
+  # - job_name: scgrep-via-traefik
+  #   scrape_interval: 60s
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["host.docker.internal:80"]
+```
+
+If you run Prometheus as its own container and want it to use option (a),
+attach it to the same network so it can resolve `scgrep`:
+
+```yaml
+# in your Prometheus compose file
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - traefik
+networks:
+  traefik:
+    name: traefik
+    external: true   # created by the SCGRep stack
+```
+
+Reload Prometheus after editing (`docker restart <prometheus>`, or `POST` to
+`/-/reload` if `--web.enable-lifecycle` is set).
+
+### 2. Confirm the target is up
+
+Open the Prometheus UI at `http://<prometheus-host>:9090` and go to
+**Status → Targets** (newer builds: **Status → Target health**). The `scgrep`
+job should be listed with **State = UP** and a recent "Last Scrape". If it shows
+`DOWN`, the error column explains why (DNS, connection refused, wrong path).
+
+### 3. Explore the metrics
+
+Go to the **Graph** page (the expression browser):
+
+1. Click in the expression field and type `wmo_wis2_scgrep` — autocomplete lists
+   all five SCGRep metrics.
+2. Enter a metric name and press **Execute**. The **Table** tab shows the current
+   value per label set; the **Graph** tab plots it over time.
+3. Narrow down with label matchers, for example:
+   - `wmo_wis2_scgrep_fetch_delay_time{protocol="mqtt"}` — async first-message
+     latency, in milliseconds.
+   - `wmo_wis2_scgrep_fetch_delay_time{protocol="http"}` — synchronous
+     time-to-first-byte.
+   - `wmo_wis2_scgrep_test_aborted_flag == 1` — only the (topic, service,
+     protocol) combinations whose fetch timed out.
+   - `wmo_wis2_scgrep_messages_fetched_during_interval_total` vs
+     `wmo_wis2_scgrep_messages_received_during_interval_total` — replayed count
+     versus the broker baseline for a topic.
+
+These are **gauges** reporting the value for the most recent test cycle, so on
+the Graph tab you see one point per cycle. A few useful expressions:
+
+```promql
+# Replayed count minus the broker baseline per topic/service (negative means the
+# replay service returned fewer messages than were seen on the brokers).
+wmo_wis2_scgrep_messages_fetched_during_interval_total{protocol="http"}
+  - on(report_by, topic) group_left
+    wmo_wis2_scgrep_messages_received_during_interval_total
+
+# Max async fetch delay across all topics for each Global Replay service.
+max by (centre_id) (wmo_wis2_scgrep_fetch_delay_time{protocol="mqtt"})
+
+# Count of aborted tests in the latest cycle.
+sum(wmo_wis2_scgrep_test_aborted_flag)
+```
+
+For dashboards and alerting, point Grafana at the same Prometheus data source, or
+add Prometheus alert rules on `wmo_wis2_scgrep_test_aborted_flag` /
+`wmo_wis2_scgrep_response_invalid_format_flag`.
+
 ## Tests
 
 ```bash
