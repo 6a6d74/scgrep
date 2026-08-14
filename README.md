@@ -56,6 +56,29 @@ test period (when the asynchronous fetch completes). The baseline and the `http`
 results are held to that same moment so a single Prometheus scrape sees a
 consistent set of values for the cycle rather than a mix of old and new.
 
+### Expect small differences between the three counts
+
+For a given topic and window, the baseline
+(`messages_received`), the synchronous fetch (`messages_fetched`, `http`), and
+the asynchronous fetch (`messages_fetched`, `mqtt`) will usually be **close but
+not identical** — small differences are normal and do not indicate a fault:
+
+- The three counts are produced by **different mechanisms** — messages the
+  Sensor Centre captured live from the Global Brokers (baseline), a point-in-time
+  `numberMatched` query against the Global Replay store (`http`), and messages
+  actually replayed over MQTT within the fetch deadline (`mqtt`) — and are
+  sampled at **slightly different instants** against a continuously updating
+  stream.
+- Messages near the **edges of the datetime window** can fall on either side
+  depending on exactly when each query runs, shifting a few messages in or out.
+- The baseline reflects only what this subscriber actually received (subject to
+  broker relay lag, deduplication, and connection timing), while the Global
+  Replay store may hold marginally more or fewer for the same window.
+
+Persistent or large gaps (e.g. one path consistently returning zero, or an
+`test_aborted_flag` / `response_invalid_format_flag` set) are what indicate a
+real problem — not a handful of messages of difference.
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
