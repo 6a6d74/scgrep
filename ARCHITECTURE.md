@@ -192,6 +192,49 @@ ISO-8601 ↔ epoch conversion, MQTT topic matching, and normalising broker URLs 
 
 Prometheus scrapes `/metrics`; Grafana renders the bundled dashboard.
 
+### A single test cycle
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant SCH as Scheduler
+    participant RC as run_cycle
+    participant RS as Redis
+    participant GRF as Global Replay<br/>Features API (http)
+    participant GRP as Global Replay<br/>Processes API
+    participant RR as ReplayRegistry
+    participant RB as Replay broker<br/>(MQTT)
+    participant M as Prometheus gauges
+
+    SCH->>RC: fire (every TEST_INTERVAL)
+    Note over RC: window = (now−LAG−INTERVAL .. now−LAG)<br/>deadline = start + 95% of INTERVAL
+
+    RC->>RS: ZCOUNT baseline per topic
+    RS-->>RC: baseline counts (held)
+
+    par for each (topic x Global Replay), in parallel
+        Note over RC,GRF: synchronous (http) fetch
+        RC->>GRF: GET items?datetime&topic
+        GRF-->>RC: numberMatched + time-to-first-byte
+    and
+        Note over RC,RB: asynchronous (mqtt) fetch
+        RC->>RR: register expected channel
+        RC->>GRP: POST /processes/.../execution
+        GRP-->>RC: subscriptions metadata (validate)
+        alt baseline > 0
+            RB-->>RR: replay messages (until deadline)
+            RR-->>RC: first-arrival time + count
+        else baseline == 0
+            Note over RC: no replays expected —<br/>use HTTP response delay, do not abort
+        end
+    end
+
+    Note over RC: wait until the 95% deadline
+    RC->>M: publish baseline + http + mqtt together
+    RC-->>SCH: cycle complete
+    Note over SCH: sleep remainder of INTERVAL
+```
+
 ## Key design decisions
 
 - **Two broker roles.** Baseline comes from the Global Brokers; replays are
