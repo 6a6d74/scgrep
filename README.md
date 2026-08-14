@@ -193,7 +193,10 @@ The Compose stack already includes **Prometheus** and **Grafana**, pre-wired:
   auto-provisioned (`grafana/provisioning/`). Open **SCGRep - Global Replay
   performance** (`/d/scgrep-overview`): five time-aligned panels — totals,
   baseline−fetched differences, fetch delay, aborted flag, and invalid-format
-  flag — with a shared crosshair across all of them.
+  flag — with a shared crosshair across all of them. Two selectors at the top
+  filter every panel: **Global Replay service** (`centre_id`, single-select) and
+  **Topic(s)** (`topic`, multi-select with an "All" option). The baseline series
+  has no `centre_id`, so it is filtered by topic only.
 
 Data is persisted in the `prometheus-data` and `grafana-data` volumes.
 
