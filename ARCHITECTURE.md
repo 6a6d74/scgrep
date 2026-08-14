@@ -91,10 +91,12 @@ certificate has lapsed).
 
 `MessageHandler.on_message` runs on paho's network thread and routes each message:
 
-- topics starting with `replay/` → `ReplayRegistry` (async replay counting);
+- topics starting with `replay/` → the `ReplayRegistry` (first-arrival timing)
+  **and** Redis (deduplicated per-cycle count); the original topic and centre-id
+  are parsed out of the replay channel path;
 - everything else → parsed as JSON and stored in Redis (baseline).
 
-### `redis_store.py` — dedup, expiry, and baseline counting
+### `redis_store.py` — dedup, expiry, and counting (baseline **and** replay)
 
 For each broker message SCGRep stores two things in Redis:
 
@@ -109,14 +111,26 @@ For each broker message SCGRep stores two things in Redis:
 The baseline for a topic/window is then a single `ZCOUNT` over the time range —
 using exactly the same topic filter that is sent to the Global Replay service.
 
-### `replay_registry.py` — correlating async replays
+**Replay messages are counted the same way**, in a separate keyspace
+`scgrep:replay:<centre-id>:<pattern>` (a sorted set scored by message time). The
+separate, **centre-scoped** keyspace matters because replayed messages carry the
+same `id`s as the originals, and different Global Replay services replay the same
+`id`s — so replay records must not clash with the baseline or with each other.
+Because a sorted-set **member is unique**, the same `id` delivered by several
+replay brokers is stored once — this is what **deduplicates** the operational
+multi-broker case for free. `clear_replay` deletes these sets at the start of a
+cycle (a clean sheet), and `count_replay_messages` is the `mqtt` count.
+
+### `replay_registry.py` — timing async replays
 
 `ReplayRegistry` is a thread-safe map from an expected replay **channel** to a
 `ReplayCounter`. When an asynchronous test starts it registers the channel it
 expects (`replay/a/wis2/<centre-id>/<subscriber-id>/<topic>`) *before* the POST,
 so fast replays are not missed. `handle_replay` (called from the MQTT thread)
 matches each incoming replay topic to an active channel and records the
-first-arrival time (for the fetch-delay metric) and a running count.
+**first-arrival time** (for the fetch-delay metric) and whether *any* message
+arrived (for abort detection). The registry is used only for **timing**; the
+deduplicated *count* comes from Redis (above).
 
 ### `replay_tester.py` — the two fetch paths
 
@@ -127,13 +141,17 @@ first-arrival time (for the fetch-delay metric) and a running count.
 - **`async_fetch`** — OGC API - Processes. POSTs to
   `.../processes/wis2-grep-subscriber/execution`, validates the returned
   `subscriptions` metadata (each channel must sit within the subscriber's
-  namespace and every configured broker must appear), then observes the
-  `ReplayCounter`:
+  namespace and every configured broker must appear), then uses the
+  `ReplayRegistry` for **timing**:
   - if the **baseline is non-zero**, it waits for the first replayed message
-    (fetch delay) and counts until the deadline; if none arrive it aborts;
+    (fetch delay) and keeps observing until the deadline; if none arrive it
+    aborts;
   - if the **baseline is zero**, no replays are expected, so it does not wait —
     it reports the time-to-first-byte of the HTTP process-execution response as
     the fetch delay and does not abort.
+
+  The `mqtt` **count** itself is not taken from here — `run_cycle` reads it from
+  Redis (deduplicated) after the fetch completes.
 
 Both return a `FetchResult` (protocol, aborted, invalid-format, fetch-delay,
 count); nothing about Prometheus lives here, which keeps the logic testable.
@@ -144,12 +162,16 @@ count); nothing about Prometheus lives here, which keeps the logic testable.
 `(now − TIME_LAG − TEST_INTERVAL) .. (now − TIME_LAG)`:
 
 1. Read the baseline for every topic from Redis (held, not yet published).
-2. Fan out a synchronous **and** an asynchronous fetch for every
+2. `clear_replay` the per-centre replay sets — a clean sheet before any process
+   is triggered.
+3. Fan out a synchronous **and** an asynchronous fetch for every
    (topic × Global Replay service) pair on a thread pool, so the slow parts run
    in parallel and the cycle fits inside one `TEST_INTERVAL`.
-3. All fetches share one **absolute deadline** anchored to the start of the cycle
+4. All fetches share one **absolute deadline** anchored to the start of the cycle
    (95% of `TEST_INTERVAL`), so they stop together.
-4. **Publish every metric at once** at that 95% instant — baseline, `http`, and
+5. For each async result, replace its count with the **deduplicated Redis count**
+   (`count_replay_messages`) for the window, when the fetch was not aborted.
+6. **Publish every metric at once** at that 95% instant — baseline, `http`, and
    `mqtt` — so a single Prometheus scrape always sees a consistent set for the
    cycle rather than a mix of old and new values.
 
@@ -184,12 +206,14 @@ ISO-8601 ↔ epoch conversion, MQTT topic matching, and normalising broker URLs 
 
 **Every `TEST_INTERVAL`**, a test cycle:
 
-1. Compute the window and read the per-topic baseline from Redis.
+1. Compute the window, read the per-topic baseline from Redis, and clear the
+   replay sets.
 2. For each topic and Global Replay service, in parallel:
    - `sync_fetch` → `numberMatched` (`http`);
-   - `async_fetch` → POST, then count replays delivered over MQTT (`mqtt`), or —
-     if the baseline is zero — the HTTP response delay.
-3. At 95% of the interval, publish all metrics together.
+   - `async_fetch` → POST and time the first replay (or, if the baseline is zero,
+     the HTTP response delay). Replays land in Redis via the message handler.
+3. Read the deduplicated `mqtt` count from Redis (`ZCOUNT`).
+4. At 95% of the interval, publish all metrics together.
 
 Prometheus scrapes `/metrics`; Grafana renders the bundled dashboard.
 
@@ -212,6 +236,7 @@ sequenceDiagram
 
     RC->>RS: ZCOUNT baseline per topic
     RS-->>RC: baseline counts (held)
+    RC->>RS: clear_replay (clean sheet)
 
     par for each (topic x Global Replay), in parallel
         Note over RC,GRF: synchronous (http) fetch
@@ -223,14 +248,17 @@ sequenceDiagram
         RC->>GRP: POST /processes/.../execution
         GRP-->>RC: subscriptions metadata (validate)
         alt baseline > 0
-            RB-->>RR: replay messages (until deadline)
-            RR-->>RC: first-arrival time + count
+            RB-->>RS: replay messages -> ZADD (dedup by id)
+            RB-->>RR: first-arrival time (any broker)
+            RR-->>RC: arrived? (else abort)
         else baseline == 0
             Note over RC: no replays expected —<br/>use HTTP response delay, do not abort
         end
     end
 
     Note over RC: wait until the 95% deadline
+    RC->>RS: ZCOUNT replay per topic (deduplicated)
+    RS-->>RC: mqtt counts
     RC->>M: publish baseline + http + mqtt together
     RC-->>SCH: cycle complete
     Note over SCH: sleep remainder of INTERVAL
@@ -245,6 +273,10 @@ sequenceDiagram
 - **Redis as a rolling window.** Dedup keys give idempotency and automatic
   expiry; per-pattern sorted sets make baseline counting a single `ZCOUNT` that
   honours wildcard subscriptions.
+- **Same counting for baseline and replay.** Replays are counted in a separate,
+  centre-scoped sorted set; sorted-set member uniqueness **deduplicates** the
+  same `id` delivered by multiple replay brokers (the operational case), and the
+  `mqtt` count is produced exactly like the baseline for a true comparison.
 - **Register-before-POST.** The async replay channel is registered before the
   process is triggered so no early replay message is missed.
 - **Namespace-prefix channel validation.** The deployed service returns one

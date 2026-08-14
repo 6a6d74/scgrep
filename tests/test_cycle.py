@@ -68,10 +68,13 @@ def test_run_cycle_publishes_all_metrics():
     )
 
     def deliver():
+        # Simulate replay messages arriving after the process is triggered.
+        # Each hits the registry (timing) and Redis (deduplicated count); "r1" is
+        # delivered twice (as if by a second broker) and must be counted once.
         time.sleep(0.1)
-        registry.handle_replay(channel)
-        registry.handle_replay(channel)
-        registry.handle_replay(channel)
+        for mid in ("r1", "r2", "r3", "r1"):
+            registry.handle_replay(channel)
+            store.store_replay_message(CENTRE, mid, in_window, TOPIC)
 
     threading.Thread(target=deliver, daemon=True).start()
 
@@ -87,6 +90,7 @@ def test_run_cycle_publishes_all_metrics():
     assert _gauge_value(metrics, metrics.response_invalid_format, **http_labels) == 0
 
     mqtt_labels = dict(report_by=report_by, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
+    # 3 distinct replay ids despite "r1" being delivered twice (deduplicated).
     assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 3
     assert _gauge_value(metrics, metrics.test_aborted, **mqtt_labels) == 0
     assert _gauge_value(metrics, metrics.response_invalid_format, **mqtt_labels) == 0
@@ -111,7 +115,11 @@ def test_all_metrics_published_together_after_fetches(monkeypatch):
 
     def fake_async(*a, **k):
         release.wait(3)  # simulate the async fetch running to ~95% of the period
-        return FetchResult("mqtt", False, False, 2.0, 7)
+        # Store two replay messages; run_cycle recomputes the mqtt count from
+        # Redis (deduplicated), so the FetchResult count below is a placeholder.
+        store.store_replay_message(CENTRE, "r1", epoch_to_iso(now - 11), TOPIC)
+        store.store_replay_message(CENTRE, "r2", epoch_to_iso(now - 11), TOPIC)
+        return FetchResult("mqtt", False, False, 2.0, 0)
 
     monkeypatch.setattr(tc, "sync_fetch", fake_sync)
     monkeypatch.setattr(tc, "async_fetch", fake_async)
@@ -133,7 +141,7 @@ def test_all_metrics_published_together_after_fetches(monkeypatch):
     assert _gauge_value(metrics, metrics.messages_received, report_by=cfg.sensor_centre_id, topic=TOPIC) == 1
     assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 5
     mqtt_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
-    assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 7
+    assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 2
 
 
 def test_publication_held_until_95pct_even_when_fetches_finish_early(monkeypatch):

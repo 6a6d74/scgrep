@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 
 from .config import Config
 from .metrics import Metrics
@@ -57,6 +58,11 @@ def run_cycle(
         for topic in config.subscription_topics
     }
 
+    # Clean sheet for this cycle's replay counting, before any process is
+    # triggered, so replay messages are counted (deduplicated across brokers)
+    # against a fresh set.
+    store.clear_replay(config.replay_centre_ids)
+
     # Fan out all fetches (the slow part) in parallel and collect their results;
     # nothing is published until every fetch has completed.
     max_workers = max(1, len(config.subscription_topics) * len(config.replay_targets) * 2)
@@ -76,9 +82,19 @@ def run_cycle(
                 )] = (centre_id, topic)
         for future, (centre_id, topic) in futures.items():
             try:
-                fetch_results.append((centre_id, topic, future.result()))
+                result = future.result()
             except Exception:  # noqa: BLE001 - one failure must not sink the cycle
                 logger.exception("A fetch task raised an unexpected error")
+                continue
+            # The async (mqtt) count comes from Redis: deduplicated across replay
+            # brokers, counted the same way as the baseline. The registry is used
+            # only for timing/abort, so its (non-deduplicated) count is replaced.
+            if result.protocol == "mqtt" and not result.aborted and baselines[topic] > 0:
+                deduped = store.count_replay_messages(
+                    centre_id, topic, start_epoch, end_epoch
+                )
+                result = replace(result, messages_fetched=deduped)
+            fetch_results.append((centre_id, topic, result))
 
     # Hold publication to exactly 95% of the test period. Fetches normally run
     # right up to this instant; this also guards the case where they finish early

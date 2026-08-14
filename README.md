@@ -47,7 +47,7 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 | Metric | Labels | Description |
 | --- | --- | --- |
 | `wmo_wis2_scgrep_messages_received_during_interval_total` | `report_by`, `topic` | Messages received from Global Brokers on the topic during the test period (baseline). |
-| `wmo_wis2_scgrep_messages_fetched_during_interval_total` | `report_by`, `centre_id`, `topic`, `protocol` | Messages retrieved from the Global Replay service (`numberMatched` for `http`; counted messages for `mqtt`). |
+| `wmo_wis2_scgrep_messages_fetched_during_interval_total` | `report_by`, `centre_id`, `topic`, `protocol` | Messages retrieved from the Global Replay service — `numberMatched` for `http`; for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). |
 | `wmo_wis2_scgrep_test_aborted_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if retrieval exceeded the test period. |
 | `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Milliseconds to first byte / first message. |
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
@@ -71,9 +71,11 @@ the tool is to watch **how large** the difference is.
 
 - The three counts come from **different mechanisms** — messages the Sensor
   Centre captured live from the Global Brokers (baseline), a point-in-time
-  `numberMatched` query against the Global Replay store (`http`), and messages
-  actually replayed over MQTT within the fetch deadline (`mqtt`) — sampled at
-  **slightly different instants** against a continuously updating stream.
+  `numberMatched` query against the Global Replay store (`http`), and the
+  replayed messages delivered over MQTT and recorded in Redis (`mqtt`, counted
+  the same way as the baseline and deduplicated by message `id` across replay
+  brokers) — sampled at **slightly different instants** against a continuously
+  updating stream.
 - Messages near the **edges of the datetime window** can fall on either side
   depending on exactly when each query runs, shifting a few messages in or out.
 - The baseline reflects only what **this subscriber** actually received (subject

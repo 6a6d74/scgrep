@@ -58,3 +58,47 @@ def test_unparseable_time_discarded(store):
     now = time.time()
     assert not store.store_message("bad", "not-a-time", "monitor/a/wis2/ca-eccc-msc")
     assert store.count_messages("monitor/a/wis2/ca-eccc-msc", now - 600, now) == 0
+
+
+def test_replay_dedup_across_brokers(store):
+    now = time.time()
+    iso = iso_ago(60)
+    # Same id delivered by two brokers -> counted once (sorted-set member unique).
+    store.store_replay_message("c1", "id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    store.store_replay_message("c1", "id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    store.store_replay_message("c1", "id-2", iso, "cache/a/wis2/ca-eccc-msc/data/y")
+    assert store.count_replay_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 2
+
+
+def test_replay_centre_scoped(store):
+    now = time.time()
+    iso = iso_ago(60)
+    # Different Global Replay services replay the same id -> counted per centre.
+    store.store_replay_message("c1", "id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    store.store_replay_message("c2", "id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    assert store.count_replay_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 1
+    assert store.count_replay_messages("c2", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 1
+
+
+def test_replay_separate_from_baseline(store):
+    now = time.time()
+    iso = iso_ago(60)
+    # A replay carries the same id as the baseline; the two keyspaces must not clash.
+    store.store_message("id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    store.store_replay_message("c1", "id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    assert store.count_messages("cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 1
+    assert store.count_replay_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 1
+
+
+def test_replay_clear(store):
+    now = time.time()
+    store.store_replay_message("c1", "id-1", iso_ago(60), "cache/a/wis2/ca-eccc-msc/data/x")
+    store.clear_replay(["c1"])
+    assert store.count_replay_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 0
+
+
+def test_replay_window_filtering(store):
+    now = time.time()
+    store.store_replay_message("c1", "old", iso_ago(200), "monitor/a/wis2/ca-eccc-msc")
+    store.store_replay_message("c1", "new", iso_ago(60), "monitor/a/wis2/ca-eccc-msc")
+    assert store.count_replay_messages("c1", "monitor/a/wis2/ca-eccc-msc", now - 120, now) == 1

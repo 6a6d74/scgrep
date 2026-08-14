@@ -94,3 +94,56 @@ class RedisStore:
         return int(
             self._redis.zcount(f"scgrep:topic:{pattern}", start_epoch, end_epoch)
         )
+
+    # -- Asynchronous replay counting -------------------------------------
+    #
+    # Replayed messages are indexed the same way as the baseline, but in a
+    # per-(centre, topic-pattern) keyspace so they never clash with the baseline
+    # (replays carry the same ``id``s as the originals) or with other Global
+    # Replay services (which replay the same ``id``s). Sorted-set members are
+    # unique, so the same ``id`` delivered by several replay brokers is counted
+    # once — this is what deduplicates the operational multi-broker case.
+
+    @staticmethod
+    def _replay_key(centre_id: str, pattern: str) -> str:
+        return f"scgrep:replay:{centre_id}:{pattern}"
+
+    def store_replay_message(
+        self, centre_id: str, msg_id: str, time_value: str, original_topic: str
+    ) -> bool:
+        """Index one replayed message for centre ``centre_id``; True if indexed."""
+        try:
+            epoch = parse_time_to_epoch(time_value)
+        except (ValueError, TypeError):
+            return False
+        stored = False
+        for pattern in self._topics:
+            if topic_matches(pattern, original_topic):
+                key = self._replay_key(centre_id, pattern)
+                pipe = self._redis.pipeline()
+                pipe.zadd(key, {msg_id: epoch})
+                # Safety-net TTL in case a cycle ends without clearing.
+                pipe.expire(key, self._expiry)
+                pipe.execute()
+                stored = True
+        return stored
+
+    def count_replay_messages(
+        self, centre_id: str, pattern: str, start_epoch: float, end_epoch: float
+    ) -> int:
+        """Count deduplicated replay messages for a centre/topic within a window."""
+        return int(
+            self._redis.zcount(
+                self._replay_key(centre_id, pattern), start_epoch, end_epoch
+            )
+        )
+
+    def clear_replay(self, centre_ids: list[str]) -> None:
+        """Delete replay index sets — a clean sheet at the start of a test cycle."""
+        keys = [
+            self._replay_key(centre_id, pattern)
+            for centre_id in centre_ids
+            for pattern in self._topics
+        ]
+        if keys:
+            self._redis.delete(*keys)

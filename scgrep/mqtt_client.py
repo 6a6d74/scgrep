@@ -23,7 +23,12 @@ logger = logging.getLogger(__name__)
 
 
 class MessageHandler:
-    """Routes broker messages to Redis (baselines) or the replay registry."""
+    """Routes broker messages to Redis, and replay messages also to the registry.
+
+    Baseline (test-topic) messages are stored in Redis. Replay messages are both
+    recorded in the registry (for first-arrival timing / abort detection) and
+    stored in Redis (for the deduplicated per-cycle count across replay brokers).
+    """
 
     def __init__(self, store: RedisStore, registry: ReplayRegistry) -> None:
         self._store = store
@@ -32,27 +37,49 @@ class MessageHandler:
     def on_message(self, client, userdata, msg) -> None:
         topic = msg.topic
         if topic.startswith("replay/"):
-            self._registry.handle_replay(topic)
+            self._handle_replay(topic, msg.payload)
             return
 
+        parsed = self._parse_message(msg.payload)
+        if parsed is None:
+            logger.debug("Ignoring message on %s: not JSON / missing id/time", topic)
+            return
+        msg_id, time_value = parsed
+        self._store.store_message(msg_id, time_value, topic)
+
+    def _handle_replay(self, topic: str, payload) -> None:
+        # First-arrival timing / abort detection (every arrival, any broker).
+        self._registry.handle_replay(topic)
+
+        # Deduplicated counting via Redis. The replay topic embeds the original
+        # topic: replay/a/wis2/<centre-id>/<subscriber-id>/<original-topic...>
+        parts = topic.split("/")
+        if len(parts) < 6:
+            return
+        centre_id = parts[3]
+        original_topic = "/".join(parts[5:])
+        parsed = self._parse_message(payload)
+        if parsed is None:
+            return
+        msg_id, time_value = parsed
+        self._store.store_replay_message(centre_id, msg_id, time_value, original_topic)
+
+    @staticmethod
+    def _parse_message(payload) -> tuple[str, str] | None:
+        """Extract (id, time) from a WIS2 notification/event payload, or None."""
         try:
-            payload = json.loads(msg.payload)
+            data = json.loads(payload)
         except (ValueError, TypeError):
-            logger.debug("Ignoring non-JSON message on %s", topic)
-            return
-
-        msg_id = payload.get("id")
-        time_value = payload.get("time")
+            return None
+        msg_id = data.get("id")
+        time_value = data.get("time")
         if time_value is None:
-            props = payload.get("properties")
+            props = data.get("properties")
             if isinstance(props, dict):
                 time_value = props.get("pubtime")
-
         if not msg_id or not time_value:
-            logger.debug("Ignoring message on %s: missing id/time", topic)
-            return
-
-        self._store.store_message(str(msg_id), str(time_value), topic)
+            return None
+        return str(msg_id), str(time_value)
 
 
 class MqttManager:
