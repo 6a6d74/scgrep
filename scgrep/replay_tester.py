@@ -99,7 +99,12 @@ def async_fetch(
     counter is observed until the deadline; the first-arrival time yields the
     fetch delay and the final count yields ``messages_fetched``.
     """
-    expected_channel = f"replay/a/wis2/{centre_id}/{subscriber_id}/{topic}"
+    # The replay service assigns a single subscriber-scoped channel (a wildcard,
+    # e.g. replay/a/wis2/<centre>/<sub>/#) shared across topics and brokers, so
+    # metadata is validated against this namespace prefix. The per-topic
+    # expected_channel is still used to route/count replay messages.
+    channel_prefix = f"replay/a/wis2/{centre_id}/{subscriber_id}/"
+    expected_channel = f"{channel_prefix}{topic}"
     counter = registry.register(expected_channel)
     aborted_delay_ms = deadline_s * 1000
     start = time.monotonic()
@@ -124,7 +129,7 @@ def async_fetch(
         finally:
             resp.close()
         invalid_format = not _validate_subscriptions(
-            metadata, expected_channel, broker_authorities
+            metadata, channel_prefix, broker_authorities
         )
     except (requests.RequestException, ValueError) as exc:
         logger.warning("mqtt async POST failed for %s (%s): %s", url, topic, exc)
@@ -156,9 +161,15 @@ def async_fetch(
 
 
 def _validate_subscriptions(
-    metadata: object, expected_channel: str, broker_authorities: list[str]
+    metadata: object, channel_prefix: str, broker_authorities: list[str]
 ) -> bool:
-    """Validate the async metadata response's ``subscriptions`` link array."""
+    """Validate the async metadata response's ``subscriptions`` link array.
+
+    ``channel_prefix`` is the subscriber's replay namespace
+    (``replay/a/wis2/<centre>/<subscriber>/``). Each link's ``channel`` must sit
+    within it — this accepts the wildcard channel the deployed service returns
+    (``…/<subscriber>/#``) as well as a per-topic channel.
+    """
     if not isinstance(metadata, dict):
         return False
     subscriptions = metadata.get("subscriptions")
@@ -169,8 +180,9 @@ def _validate_subscriptions(
     for link in subscriptions:
         if not isinstance(link, dict):
             return False
-        # Every link's channel must point at the expected replay topic.
-        if link.get("channel") != expected_channel:
+        # Every link's channel must be within the subscriber's replay namespace.
+        channel = link.get("channel")
+        if not isinstance(channel, str) or not channel.startswith(channel_prefix):
             return False
         href = link.get("href")
         if not isinstance(href, str):

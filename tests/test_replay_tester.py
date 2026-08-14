@@ -78,27 +78,34 @@ def _valid_metadata(channel, hrefs):
     }
 
 
-def test_validate_subscriptions_ok():
-    channel = "replay/a/wis2/c/uuid/" + TOPIC
-    meta = _valid_metadata(channel, ["mqtts://everyone:everyone@globalbroker.meteo.fr:8883"])
-    assert _validate_subscriptions(meta, channel, ["globalbroker.meteo.fr:8883"])
+PREFIX = "replay/a/wis2/c/uuid/"
 
 
-def test_validate_subscriptions_wrong_channel():
-    channel = "replay/a/wis2/c/uuid/" + TOPIC
-    meta = _valid_metadata("replay/a/wis2/c/uuid/wrong", ["mqtts://globalbroker.meteo.fr:8883"])
-    assert not _validate_subscriptions(meta, channel, ["globalbroker.meteo.fr:8883"])
+def test_validate_subscriptions_wildcard_channel_ok():
+    # The deployed service returns one subscriber-scoped wildcard channel.
+    meta = _valid_metadata(PREFIX + "#", ["mqtts://everyone:everyone@globalbroker.meteo.fr:8883"])
+    assert _validate_subscriptions(meta, PREFIX, ["globalbroker.meteo.fr:8883"])
+
+
+def test_validate_subscriptions_per_topic_channel_ok():
+    # A per-topic channel within the namespace is also accepted.
+    meta = _valid_metadata(PREFIX + TOPIC, ["mqtts://globalbroker.meteo.fr:8883"])
+    assert _validate_subscriptions(meta, PREFIX, ["globalbroker.meteo.fr:8883"])
+
+
+def test_validate_subscriptions_channel_outside_namespace():
+    meta = _valid_metadata("replay/a/wis2/other/uuid/#", ["mqtts://globalbroker.meteo.fr:8883"])
+    assert not _validate_subscriptions(meta, PREFIX, ["globalbroker.meteo.fr:8883"])
 
 
 def test_validate_subscriptions_missing_broker():
-    channel = "replay/a/wis2/c/uuid/" + TOPIC
-    meta = _valid_metadata(channel, ["mqtts://other.broker:8883"])
-    assert not _validate_subscriptions(meta, channel, ["globalbroker.meteo.fr:8883"])
+    meta = _valid_metadata(PREFIX + "#", ["mqtts://other.broker:8883"])
+    assert not _validate_subscriptions(meta, PREFIX, ["globalbroker.meteo.fr:8883"])
 
 
 def test_validate_subscriptions_empty():
-    assert not _validate_subscriptions({"subscriptions": []}, "chan", [])
-    assert not _validate_subscriptions({}, "chan", [])
+    assert not _validate_subscriptions({"subscriptions": []}, PREFIX, [])
+    assert not _validate_subscriptions({}, PREFIX, [])
 
 
 # --------------------------------------------------------------------------
@@ -109,15 +116,16 @@ def test_validate_subscriptions_empty():
 def test_async_fetch_receives_messages():
     centre_id = "ca-eccc-msc-global-replay"
     subscriber_id = "uuid-1234"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
     channel = f"replay/a/wis2/{centre_id}/{subscriber_id}/{TOPIC}"
     responses.add(
         responses.POST, EXEC_URL,
-        json=_valid_metadata(channel, ["mqtts://globalbroker.meteo.fr:8883"]),
+        json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
         status=200,
     )
     registry = ReplayRegistry()
 
-    # Simulate replay messages arriving shortly after the test starts.
+    # Simulate replay messages arriving on the concrete per-topic replay topic.
     def deliver():
         time.sleep(0.1)
         registry.handle_replay(channel)
@@ -142,10 +150,10 @@ def test_async_fetch_receives_messages():
 def test_async_fetch_aborts_without_messages():
     centre_id = "ca-eccc-msc-global-replay"
     subscriber_id = "uuid-1234"
-    channel = f"replay/a/wis2/{centre_id}/{subscriber_id}/{TOPIC}"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
     responses.add(
         responses.POST, EXEC_URL,
-        json=_valid_metadata(channel, ["mqtts://globalbroker.meteo.fr:8883"]),
+        json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
         status=200,
     )
     registry = ReplayRegistry()
