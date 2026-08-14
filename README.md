@@ -56,28 +56,47 @@ test period (when the asynchronous fetch completes). The baseline and the `http`
 results are held to that same moment so a single Prometheus scrape sees a
 consistent set of values for the cycle rather than a mix of old and new.
 
-### Expect small differences between the three counts
+### Why the baseline and fetch counts differ
 
-For a given topic and window, the baseline
+For a given topic and window the three counts — the baseline
 (`messages_received`), the synchronous fetch (`messages_fetched`, `http`), and
-the asynchronous fetch (`messages_fetched`, `mqtt`) will usually be **close but
-not identical** — small differences are normal and do not indicate a fault:
+the asynchronous fetch (`messages_fetched`, `mqtt`) — measure *the same thing by
+three different routes*, so some difference between them is normal. The point of
+the tool is to watch **how large** the difference is.
 
-- The three counts are produced by **different mechanisms** — messages the
-  Sensor Centre captured live from the Global Brokers (baseline), a point-in-time
+**Small differences are expected and not a fault.** They arise because:
+
+- The three counts come from **different mechanisms** — messages the Sensor
+  Centre captured live from the Global Brokers (baseline), a point-in-time
   `numberMatched` query against the Global Replay store (`http`), and messages
-  actually replayed over MQTT within the fetch deadline (`mqtt`) — and are
-  sampled at **slightly different instants** against a continuously updating
-  stream.
+  actually replayed over MQTT within the fetch deadline (`mqtt`) — sampled at
+  **slightly different instants** against a continuously updating stream.
 - Messages near the **edges of the datetime window** can fall on either side
   depending on exactly when each query runs, shifting a few messages in or out.
-- The baseline reflects only what this subscriber actually received (subject to
-  broker relay lag, deduplication, and connection timing), while the Global
+- The baseline reflects only what **this subscriber** actually received (subject
+  to broker relay lag, deduplication, and connection timing), while the Global
   Replay store may hold marginally more or fewer for the same window.
 
-Persistent or large gaps (e.g. one path consistently returning zero, or an
-`test_aborted_flag` / `response_invalid_format_flag` set) are what indicate a
-real problem — not a handful of messages of difference.
+**Larger or persistent differences are the signal to investigate:**
+
+- **`http` (or `mqtt`) well below the baseline** — the Global Replay service is
+  returning fewer messages than were seen on the brokers, i.e. it is missing data
+  for that window/topic. This is exactly the performance gap SCGRep exists to
+  surface.
+- **`http` above the baseline** — the replay store holds messages this subscriber
+  did not receive (e.g. it missed them, or the store includes messages from
+  brokers the subscriber is not connected to).
+- **`mqtt` at zero with `test_aborted_flag` set** — no replayed messages arrived
+  on the broker SCGRep subscribes to within the deadline. This can be a genuine
+  timeliness failure, or a configuration/coverage issue — e.g. during the
+  preoperational phase the replay service may publish replays to its own broker
+  rather than the operational Global Brokers (see `GLOBAL_REPLAY_BROKER_URL`).
+- **`response_invalid_format_flag` set** — the response was malformed, so its
+  count is unreliable regardless of the number.
+
+The Grafana **Differences** panel (below) plots `baseline − fetched` directly, so
+these gaps are easy to spot at a glance: a line hovering near zero is healthy;
+a line trending away from zero is a service that is losing or gaining messages.
 
 ## Configuration
 
@@ -190,15 +209,38 @@ The Compose stack already includes **Prometheus** and **Grafana**, pre-wired:
   `prometheus/prometheus.yml`).
 - Grafana: `http://localhost:3000` (default login `admin` / `admin` — change it)
   — the Prometheus datasource **and** a pre-built SCGRep dashboard are
-  auto-provisioned (`grafana/provisioning/`). Open **SCGRep - Global Replay
-  performance** (`/d/scgrep-overview`): five time-aligned panels — totals,
-  baseline−fetched differences, fetch delay, aborted flag, and invalid-format
-  flag — with a shared crosshair across all of them. Two selectors at the top
-  filter every panel: **Global Replay service** (`centre_id`, single-select) and
-  **Topic(s)** (`topic`, multi-select with an "All" option). The baseline series
-  has no `centre_id`, so it is filtered by topic only.
+  auto-provisioned from `grafana/provisioning/` (see [Dashboard](#dashboard)).
 
 Data is persisted in the `prometheus-data` and `grafana-data` volumes.
+
+### Dashboard
+
+The provisioned dashboard **SCGRep - Global Replay performance**
+(`http://localhost:3000/d/scgrep-overview`) gives an at-a-glance view of one
+Global Replay service across the tested topics.
+
+**Selectors** (top of the dashboard, applied to every panel):
+
+- **Global Replay service** — the `centre_id` label, **single-select** (pick one
+  service to inspect).
+- **Topic(s)** — the `topic` label, **multi-select** with an **All** option; the
+  list is scoped to the selected service.
+
+**Panels** — five stacked time-series panels sharing one time axis and a shared
+crosshair, so a hover lines up across all of them:
+
+| # | Panel | Series | Reads as |
+| --- | --- | --- | --- |
+| 1 | **Totals** | baseline, `http`, `mqtt` message counts | how many messages each route saw per interval |
+| 2 | **Differences** | `baseline − http`, `baseline − mqtt` | near zero = healthy; drifting away = the service is losing/gaining messages |
+| 3 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
+| 4 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = the fetch exceeded the test period |
+| 5 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
+
+Because the baseline (`messages_received`) has no `centre_id` label, panels 1 and
+2 filter it by topic only; the `http`/`mqtt` series filter by both service and
+topic. See [Why the baseline and fetch counts differ](#why-the-baseline-and-fetch-counts-differ)
+for how to interpret panels 1 and 2.
 
 The rest of this section is for pointing an **external** Prometheus at SCGRep.
 
