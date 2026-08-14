@@ -61,7 +61,9 @@ class Config:
     metrics_port: int
     time_lag: int
     test_interval: int
+    replay_broker: BrokerConfig
     redis_startup_timeout: int = 60
+    replay_broker_tls_insecure: bool = True
     subscriber_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @property
@@ -136,6 +138,19 @@ class Config:
         if not metrics_endpoint.startswith("/"):
             metrics_endpoint = "/" + metrics_endpoint
 
+        # Broker on which the Global Replay service delivers async replay
+        # messages. In the preoperational phase this is the GRep instance's own
+        # broker rather than the operational Global Brokers.
+        replay_broker = BrokerConfig.from_url(
+            env.get(
+                "GLOBAL_REPLAY_BROKER_URL",
+                "mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883",
+            ).strip()
+        )
+        replay_broker_tls_insecure = env.get(
+            "GLOBAL_REPLAY_BROKER_TLS_INSECURE", "true"
+        ).strip().lower() in ("1", "true", "yes", "on")
+
         return cls(
             sensor_centre_id=sensor_centre_id,
             brokers=brokers,
@@ -147,5 +162,7 @@ class Config:
             metrics_port=metrics_port,
             time_lag=time_lag,
             test_interval=test_interval,
+            replay_broker=replay_broker,
             redis_startup_timeout=redis_startup_timeout,
+            replay_broker_tls_insecure=replay_broker_tls_insecure,
         )

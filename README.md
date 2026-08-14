@@ -62,6 +62,8 @@ All configuration is via environment variables (see `.env.example`).
 | `GLOBAL_BROKER_URLS` | `mqtts://everyone:everyone@globalbroker.meteo.fr:8883` | Comma-delimited Global Broker MQTT URLs. |
 | `GLOBAL_REPLAY_CENTRE_IDS` | `ca-eccc-msc-global-replay` | Comma-delimited centre-ids under test. |
 | `GLOBAL_REPLAY_URLS` | `https://wis2-grep.weather.gc.ca` | Comma-delimited Global Replay URLs (same length/order as centre-ids). |
+| `GLOBAL_REPLAY_BROKER_URL` | `mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883` | Broker where the Global Replay service delivers async replay messages. Preoperationally this is the GRep instance's own broker, not the operational Global Brokers — so it only works when testing a **single** GRep instance. |
+| `GLOBAL_REPLAY_BROKER_TLS_INSECURE` | `true` | Skip TLS verification for the replay broker (its certificate is currently expired). |
 | `REDIS_URL` | `redis:6379` | Redis host:port (or a `redis://` URL). |
 | `METRICS_ENDPOINT` | `/metrics` | Path where metrics are served. |
 | `METRICS_PORT` | `8000` | Port for the metrics HTTP server. |

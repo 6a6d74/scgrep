@@ -84,10 +84,21 @@ services:
         required: false
     environment:
       SENSOR_CENTRE_ID: io-wis2dev-myinstance-sensor-centre-global-replay
-      SUBSCRIPTION_TOPICS: "cache/a/wis2/ca-eccc-msc/data/core/weather/surface-based-observations/synop,monitor/a/wis2/ca-eccc-msc"
+      # Temporarily a broad wildcard to exercise the replay path during testing;
+      # normally a curated list of ~10-20 notification and event topics.
+      SUBSCRIPTION_TOPICS: "cache/a/wis2/+/data/#"
       GLOBAL_BROKER_URLS: "mqtts://everyone:everyone@globalbroker.meteo.fr:8883"
       GLOBAL_REPLAY_CENTRE_IDS: ca-eccc-msc-global-replay
       GLOBAL_REPLAY_URLS: "https://wis2-grep.weather.gc.ca"
+      # Broker on which the Global Replay service delivers async replay messages.
+      # Normally the replays would arrive on the operational Global Brokers, but
+      # during this preoperational phase the GRep instance is not yet connected
+      # to them, so we subscribe directly to the GRep instance's own broker.
+      # NOTE: this direct-to-GRep-broker approach only works when testing a
+      # SINGLE Global Replay instance (one replay broker).
+      GLOBAL_REPLAY_BROKER_URL: "mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883"
+      # The GRep broker's TLS certificate is currently expired; skip verification.
+      GLOBAL_REPLAY_BROKER_TLS_INSECURE: "true"
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
       METRICS_PORT: "8000"
