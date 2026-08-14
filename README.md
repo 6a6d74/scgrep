@@ -136,8 +136,17 @@ python -m scgrep
 
 ## Scraping with Prometheus
 
-SCGRep exposes a standard Prometheus text endpoint, so any Prometheus instance
-can scrape it. Add a scrape job pointing at the metrics endpoint.
+The Compose stack already includes **Prometheus** and **Grafana**, pre-wired:
+
+- Prometheus: `http://localhost:9090` — scrapes `scgrep:8000` (config in
+  `prometheus/prometheus.yml`).
+- Grafana: `http://localhost:3000` (default login `admin` / `admin` — change it)
+  — the Prometheus datasource is auto-provisioned
+  (`grafana/provisioning/datasources/`), so you can build dashboards immediately.
+
+Data is persisted in the `prometheus-data` and `grafana-data` volumes.
+
+The rest of this section is for pointing an **external** Prometheus at SCGRep.
 
 ### 1. Add a scrape job
 

@@ -1,0 +1,17 @@
+# Prometheus configuration for the SCGRep stack.
+
+global:
+  scrape_interval: 60s
+
+scrape_configs:
+  # SCGRep exposes its metrics on the plain-HTTP backend port; Prometheus is on
+  # the same Compose network so it scrapes the container directly by name.
+  - job_name: scgrep
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["scgrep:8000"]
+
+  # Prometheus scraping itself (useful for sanity checks).
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

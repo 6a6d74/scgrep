@@ -127,7 +127,43 @@ services:
     networks:
       - traefik
 
+  prometheus:
+    image: prom/prometheus:v3
+    # No explicit container_name (avoids colliding with any other "prometheus"
+    # container); reachable as "prometheus" on the network by service name.
+    restart: unless-stopped
+    depends_on:
+      - scgrep
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"   # Prometheus UI
+    networks:
+      - traefik
+
+  grafana:
+    image: grafana/grafana:latest
+    restart: unless-stopped
+    depends_on:
+      - prometheus
+    environment:
+      # Default local credentials — change for anything beyond local testing.
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"   # Grafana UI
+    networks:
+      - traefik
+
 networks:
   traefik:
     # Compose-managed bridge network shared by all services in this stack.
     name: traefik
+
+volumes:
+  prometheus-data:
+  grafana-data:
