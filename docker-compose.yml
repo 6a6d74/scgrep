@@ -91,14 +91,14 @@ services:
       GLOBAL_REPLAY_CENTRE_IDS: ca-eccc-msc-global-replay
       GLOBAL_REPLAY_URLS: "https://wis2-grep.weather.gc.ca"
       # Broker on which the Global Replay service delivers async replay messages.
-      # Normally the replays would arrive on the operational Global Brokers, but
-      # during this preoperational phase the GRep instance is not yet connected
-      # to them, so we subscribe directly to the GRep instance's own broker.
-      # NOTE: this direct-to-GRep-broker approach only works when testing a
-      # SINGLE Global Replay instance (one replay broker).
-      GLOBAL_REPLAY_BROKER_URL: "mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883"
-      # The GRep broker now presents a valid certificate, so TLS is verified.
-      # (Set to "true" only if the broker's certificate lapses again.)
+      # The operational Global Brokers do not (yet) republish this GRep instance's
+      # messages, but the WIS2 test Global Broker (io-wis2dev-global-broker) is
+      # connected to the GRep's local broker and republishes them, so we subscribe
+      # for replays there. (The GRep's own broker,
+      # mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883, also works.)
+      GLOBAL_REPLAY_BROKER_URL: "mqtts://everyone:everyone@gb.wis2dev.io:8883"
+      # The test Global Broker presents a valid certificate, so TLS is verified.
+      # (Set to "true" only if a replay broker's certificate lapses.)
       GLOBAL_REPLAY_BROKER_TLS_INSECURE: "false"
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
