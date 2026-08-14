@@ -4,10 +4,12 @@ import time
 import fakeredis
 import responses
 
+import scgrep.test_cycle as tc
 from scgrep.config import Config
 from scgrep.metrics import Metrics
 from scgrep.redis_store import RedisStore
 from scgrep.replay_registry import ReplayRegistry
+from scgrep.replay_tester import FetchResult
 from scgrep.test_cycle import run_cycle
 from scgrep.util import epoch_to_iso
 
@@ -88,3 +90,47 @@ def test_run_cycle_publishes_all_metrics():
     assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 3
     assert _gauge_value(metrics, metrics.test_aborted, **mqtt_labels) == 0
     assert _gauge_value(metrics, metrics.response_invalid_format, **mqtt_labels) == 0
+
+
+def test_all_metrics_published_together_after_fetches(monkeypatch):
+    """Baseline and http metrics are held until the (slow) async fetch finishes,
+    so every metric for the cycle updates at the same time."""
+    cfg = Config.from_env(dict(ENV))
+    client = fakeredis.FakeRedis(decode_responses=True)
+    store = RedisStore("redis:6379", cfg.redis_expiry, cfg.subscription_topics, client=client)
+    registry = ReplayRegistry()
+    metrics = Metrics()
+
+    now = time.time()
+    store.store_message("a", epoch_to_iso(now - 11), TOPIC)  # in-window baseline
+
+    release = threading.Event()
+
+    def fake_sync(*a, **k):
+        return FetchResult("http", False, False, 1.0, 5)
+
+    def fake_async(*a, **k):
+        release.wait(3)  # simulate the async fetch running to ~95% of the period
+        return FetchResult("mqtt", False, False, 2.0, 7)
+
+    monkeypatch.setattr(tc, "sync_fetch", fake_sync)
+    monkeypatch.setattr(tc, "async_fetch", fake_async)
+
+    thread = threading.Thread(target=run_cycle, args=(cfg, store, registry, metrics), kwargs={"now": now})
+    thread.start()
+
+    # While the async fetch is still running, nothing should be published yet —
+    # including the (fast) baseline and http results.
+    time.sleep(0.3)
+    assert _gauge_value(metrics, metrics.messages_received, report_by=cfg.sensor_centre_id, topic=TOPIC) == 0
+    http_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="http")
+    assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 0
+
+    release.set()
+    thread.join(timeout=3)
+
+    # Now everything is published together.
+    assert _gauge_value(metrics, metrics.messages_received, report_by=cfg.sensor_centre_id, topic=TOPIC) == 1
+    assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 5
+    mqtt_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
+    assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 7

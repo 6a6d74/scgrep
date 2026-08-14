@@ -26,9 +26,15 @@ def run_cycle(
     """Run one full test cycle.
 
     The test window is ``(now - TIME_LAG - TEST_INTERVAL) .. (now - TIME_LAG)``.
-    Baselines are read from Redis, then every (topic, replay-service) pair is
-    tested with a synchronous and an asynchronous fetch, all in parallel so the
-    cycle completes within one ``TEST_INTERVAL``.
+    Baselines are read from Redis and every (topic, replay-service) pair is tested
+    with a synchronous and an asynchronous fetch, all in parallel so the cycle
+    completes within one ``TEST_INTERVAL``.
+
+    All metrics for the cycle are published together, once the fetches finish.
+    The asynchronous fetch runs until ~95% of the test period, so the baseline
+    and the synchronous (``http``) results are held and published at that same
+    moment as the asynchronous (``mqtt``) results — keeping every metric for the
+    cycle consistent within a single Prometheus scrape.
     """
     now = time.time() if now is None else now
     end_epoch = now - config.time_lag
@@ -41,37 +47,39 @@ def run_cycle(
 
     logger.info("Running test cycle for window %s .. %s", start_iso, end_iso)
 
-    # Baselines: fast Redis reads, published up front.
-    for topic in config.subscription_topics:
-        count = store.count_messages(topic, start_epoch, end_epoch)
-        metrics.messages_received.labels(report_by=report_by, topic=topic).set(count)
+    # Baselines: fast Redis reads, held for publication at the end of the cycle.
+    baselines = {
+        topic: store.count_messages(topic, start_epoch, end_epoch)
+        for topic in config.subscription_topics
+    }
 
-    # Fan out all fetches (the slow part) in parallel.
+    # Fan out all fetches (the slow part) in parallel and collect their results;
+    # nothing is published until every fetch has completed.
     max_workers = max(1, len(config.subscription_topics) * len(config.replay_targets) * 2)
+    fetch_results: list[tuple[str, str, FetchResult]] = []
     with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="fetch") as ex:
-        futures = []
+        futures = {}
         for topic in config.subscription_topics:
             for centre_id, replay_url in config.replay_targets:
-                futures.append(
-                    ex.submit(
-                        _run_and_publish_sync,
-                        metrics, report_by, centre_id, topic,
-                        replay_url, start_iso, end_iso, deadline_s,
-                    )
-                )
-                futures.append(
-                    ex.submit(
-                        _run_and_publish_async,
-                        metrics, report_by, centre_id, topic, replay_url,
-                        config.subscriber_id, broker_authorities,
-                        start_iso, end_iso, deadline_s, registry,
-                    )
-                )
-        for future in futures:
+                futures[ex.submit(
+                    sync_fetch, replay_url, topic, start_iso, end_iso, deadline_s
+                )] = (centre_id, topic)
+                futures[ex.submit(
+                    async_fetch, replay_url, centre_id, topic, config.subscriber_id,
+                    broker_authorities, start_iso, end_iso, deadline_s, registry,
+                )] = (centre_id, topic)
+        for future, (centre_id, topic) in futures.items():
             try:
-                future.result()
+                fetch_results.append((centre_id, topic, future.result()))
             except Exception:  # noqa: BLE001 - one failure must not sink the cycle
                 logger.exception("A fetch task raised an unexpected error")
+
+    # Publish everything together, now that the async fetches have reached ~95%
+    # of the test period, so all metrics for this cycle update at the same time.
+    for topic, count in baselines.items():
+        metrics.messages_received.labels(report_by=report_by, topic=topic).set(count)
+    for centre_id, topic, result in fetch_results:
+        _publish(metrics, report_by, centre_id, topic, result)
 
     logger.info("Test cycle complete")
 
@@ -95,21 +103,3 @@ def _publish(
     )
     metrics.fetch_delay.labels(**labels).set(result.fetch_delay_ms)
     metrics.messages_fetched.labels(**labels).set(result.messages_fetched)
-
-
-def _run_and_publish_sync(
-    metrics, report_by, centre_id, topic, replay_url, start_iso, end_iso, deadline_s
-) -> None:
-    result = sync_fetch(replay_url, topic, start_iso, end_iso, deadline_s)
-    _publish(metrics, report_by, centre_id, topic, result)
-
-
-def _run_and_publish_async(
-    metrics, report_by, centre_id, topic, replay_url, subscriber_id,
-    broker_authorities, start_iso, end_iso, deadline_s, registry
-) -> None:
-    result = async_fetch(
-        replay_url, centre_id, topic, subscriber_id, broker_authorities,
-        start_iso, end_iso, deadline_s, registry,
-    )
-    _publish(metrics, report_by, centre_id, topic, result)
