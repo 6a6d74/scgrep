@@ -23,6 +23,25 @@ Counts are only meaningful for windows that SCGRep has actually replay-tested
 (roughly ``TIME_LAG`` behind now), so by default the reporting window ends at the
 most recent replayed message found in the logs rather than at the wall clock.
 
+Times here predate the Grafana dashboards
+------------------------------------------
+The pub-time windows in this report are *earlier* than where the same issue shows
+up in Grafana, because several delays sit between a message's pub-time and the
+moment its metric is plotted:
+
+  1. ``TIME_LAG`` (e.g. 300s) -- SCGRep only tests a window once it is this far in
+     the past, so a message's pub-time is already ``TIME_LAG`` behind when tested.
+  2. ``TEST_INTERVAL`` (e.g. 60s) -- metrics are published only at the *end* of
+     the test period.
+  3. Prometheus scrape interval (e.g. 60s) -- the published value is not stored
+     until the next scrape.
+  4. Grafana rounding (~15s) -- data points are aligned to the nearest 15 seconds.
+
+With the example values above that is 300 + 60 + 60 + 15 s, so an issue seen at
+time *T* in this report appears at roughly *T + 8 minutes* on the dashboard. Also,
+this report is in **UTC**, whereas Grafana usually renders in the **browser's
+local time** -- so account for that offset too when lining the two up.
+
 Everything is standard-library only; run with ``-h`` / ``--help`` for usage.
 """
 
@@ -320,7 +339,14 @@ def build_parser() -> argparse.ArgumentParser:
             "  replay_loss_report.py -t us-noaa-nws -s summary\n\n"
             "The topic is matched as a substring of the log's topic= field, so "
             "'us-noaa-nws' matches both the concrete baseline topics and the "
-            "'.../#' replay wildcard."
+            "'.../#' replay wildcard.\n\n"
+            "note on times vs Grafana:\n"
+            "  Windows here are EARLIER than where the same issue appears on the\n"
+            "  Grafana dashboard. Between a message's pub-time and its plotted\n"
+            "  metric sit TIME_LAG (e.g. 300s), the TEST_INTERVAL until metrics are\n"
+            "  published (e.g. 60s), the Prometheus scrape interval (e.g. 60s) and\n"
+            "  Grafana's ~15s rounding -- roughly 8 minutes in total. This report is\n"
+            "  in UTC; Grafana usually shows local time. Account for both offsets."
         ),
     )
     parser.add_argument(

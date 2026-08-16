@@ -186,6 +186,12 @@ by message `pubtime`, and the Global Replay `datetime` filter does too.
    python scripts/replay_loss_report.py -t us-noaa-nws -s summary
    ```
 
+   Note that only the **values** line up — the **times** do not. A window shown in
+   the report appears roughly **8 minutes later** on the Grafana dashboard
+   (`TIME_LAG` + `TEST_INTERVAL` + the Prometheus scrape interval + Grafana's ~15s
+   rounding), and the report is in **UTC** while Grafana usually renders local
+   time. See the script's `-h` for the full breakdown.
+
    A large positive difference for a window is the same signal as above: messages
    the Sensor Centre saw live that the replay service did not return.
 
