@@ -18,6 +18,10 @@ traefik/dashboard-users
 # mkcert-generated TLS certificates (machine-specific; generate locally)
 traefik/certs/*.pem
 
+# Log files written by the app (the logs/ dir itself is kept via .gitkeep)
+logs/*.log
+logs/.purge-*
+
 .idea/
 .vscode/
 .DS_Store

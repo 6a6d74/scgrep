@@ -124,6 +124,8 @@ All configuration is via environment variables (see `.env.example`).
 | `REDIS_STARTUP_TIMEOUT` | `60` | Seconds to wait for Redis to become reachable on startup before giving up. |
 | `LOG_LEVEL` | `INFO` | Python log level. The detailed activity logs are at `INFO`; set `WARNING` to keep only warnings/errors. |
 | `LOG_HTTP_RESPONSE_MAX_CHARS` | `1000` | Max characters of an HTTP response body written to the log (longer bodies are truncated). |
+| `LOG_FILE` | *(unset)* | Also write logs to this file (in addition to stdout). Unset/blank = stdout only. |
+| `LOG_FILE_FLUSH_INTERVAL` | `60` | How often (seconds) buffered logs are written to `LOG_FILE`. |
 
 ## Logging
 
@@ -152,6 +154,38 @@ so it is always captured unless explicitly turned off with `LOG_LEVEL=WARNING`
 Emitted at `WARNING` (always shown): **aborted tests** (synchronous timeout or no
 replay within the deadline), **malformed / invalid responses**, failed process
 executions, and broker disconnects.
+
+Timestamps are **UTC**.
+
+### Writing logs to a file
+
+Set `LOG_FILE` to also write logs to a file (in addition to stdout). Records are
+buffered and written every `LOG_FILE_FLUSH_INTERVAL` seconds (default 60) —
+so the file updates in batches, not live (use stdout for a live tail); errors are
+written immediately. A `WatchedFileHandler` reopens the file if it is replaced,
+so the file can be trimmed underneath a running app.
+
+In the Compose deployment this is enabled and points at
+`/var/log/scgrep/scgrep.log`, mounted to `./logs/scgrep.log` on the host.
+
+### Purging old log entries
+
+`scripts/purge_logs.py` removes log entries older than a cutoff from a log file,
+in place (it rewrites the file atomically, keeping only entries at/after the
+cutoff; entries are matched by their leading UTC timestamp):
+
+```bash
+python scripts/purge_logs.py ./logs/scgrep.log --max-age-hours 24
+```
+
+The Compose stack runs this **hourly** as a small `log-purge` service (it reuses
+the SCGRep image for Python, runs the script from the mounted `./scripts`, and
+keeps `PURGE_LOG_MAX_AGE_HOURS` hours — default 24). To run it on a schedule
+outside Docker instead, point cron at the same script, e.g.:
+
+```cron
+0 * * * * /usr/bin/python3 /path/to/scripts/purge_logs.py /path/to/logs/scgrep.log --max-age-hours 24
+```
 
 ## Running
 

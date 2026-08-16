@@ -111,9 +111,16 @@ services:
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
       METRICS_PORT: "8000"
-      # Operational values (seconds).
+      # Timing (seconds). TEST_INTERVAL shortened to 60 for more frequent
+      # testing; TIME_LAG kept at the operational 300.
       TIME_LAG: "300"
-      TEST_INTERVAL: "300"
+      TEST_INTERVAL: "60"
+      # Also write logs to a file (in the mounted ./logs volume), flushed
+      # periodically. The log-purge service trims this file hourly.
+      LOG_FILE: /var/log/scgrep/scgrep.log
+      LOG_FILE_FLUSH_INTERVAL: "60"
+    volumes:
+      - ./logs:/var/log/scgrep
     # No published ports: Traefik fronts the metrics endpoint, reaching this
     # container by service name (scgrep:8000) over the shared network.
     healthcheck:
@@ -132,6 +139,32 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+    networks:
+      - traefik
+
+  # Hourly job that trims the shared log file, removing entries older than
+  # PURGE_LOG_MAX_AGE_HOURS. Reuses the scgrep image (it has Python) and runs the
+  # standalone script mounted from ./scripts.
+  log-purge:
+    image: scgrep:latest
+    depends_on:
+      - scgrep
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "log-purge: running every 3600s (max age $${PURGE_LOG_MAX_AGE_HOURS}h)";
+        while true; do
+          python /scripts/purge_logs.py "$${PURGE_LOG_FILE}" \
+            --max-age-hours "$${PURGE_LOG_MAX_AGE_HOURS}" || true;
+          sleep 3600;
+        done
+    environment:
+      PURGE_LOG_FILE: /var/log/scgrep/scgrep.log
+      PURGE_LOG_MAX_AGE_HOURS: "24"
+    volumes:
+      - ./logs:/var/log/scgrep
+      - ./scripts:/scripts:ro
     networks:
       - traefik
 

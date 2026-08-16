@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import atexit
 import logging
+import logging.handlers
 import os
 import signal
 import sys
@@ -20,11 +22,68 @@ logger = logging.getLogger("scgrep")
 
 
 def _configure_logging() -> None:
-    level = os.environ.get("LOG_LEVEL", "INFO").upper()
-    logging.basicConfig(
-        level=getattr(logging, level, logging.INFO),
-        format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    """Log to stdout, and optionally to a file written periodically.
+
+    Timestamps are UTC. Stdout gets every record immediately. When ``LOG_FILE``
+    is set, records are buffered and written to that file every
+    ``LOG_FILE_FLUSH_INTERVAL`` seconds (default 60); errors are flushed at once.
+    A ``WatchedFileHandler`` reopens the file if it is replaced, so the external
+    hourly purge works cleanly.
+    """
+    level_name = os.environ.get("LOG_LEVEL", "INFO").upper()
+    formatter = logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s")
+    formatter.converter = time.gmtime  # UTC timestamps
+
+    root = logging.getLogger()
+    root.setLevel(getattr(logging, level_name, logging.INFO))
+    for handler in list(root.handlers):
+        root.removeHandler(handler)
+
+    stream = logging.StreamHandler()
+    stream.setFormatter(formatter)
+    root.addHandler(stream)
+
+    log_file = os.environ.get("LOG_FILE", "").strip()
+    if log_file:
+        _add_periodic_file_logging(root, log_file, formatter)
+
+
+def _add_periodic_file_logging(root, log_file: str, formatter) -> None:
+    try:
+        interval = float(os.environ.get("LOG_FILE_FLUSH_INTERVAL", "60"))
+    except ValueError:
+        interval = 60.0
+    if interval <= 0:
+        interval = 60.0
+
+    try:
+        directory = os.path.dirname(log_file)
+        if directory:
+            os.makedirs(directory, exist_ok=True)
+        file_handler = logging.handlers.WatchedFileHandler(log_file, encoding="utf-8")
+    except OSError as exc:
+        logger.warning("File logging disabled: cannot open %r: %s", log_file, exc)
+        return
+    file_handler.setFormatter(formatter)
+
+    # Buffer records and write them to the file in batches every `interval`
+    # seconds; flush immediately on errors so they are never lost.
+    memory = logging.handlers.MemoryHandler(
+        capacity=100_000, flushLevel=logging.ERROR, target=file_handler
     )
+    root.addHandler(memory)
+
+    def flush_periodically() -> None:
+        while True:
+            time.sleep(interval)
+            memory.flush()
+
+    threading.Thread(
+        target=flush_periodically, name="log-file-flush", daemon=True
+    ).start()
+    atexit.register(memory.close)  # flushes the final batch on shutdown
+
+    logger.info("Writing logs to %s (flushed every %.0fs)", log_file, interval)
 
 
 def _wait_for_redis(

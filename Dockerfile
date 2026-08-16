@@ -13,8 +13,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Application code.
 COPY scgrep ./scgrep
 
-# Run as an unprivileged user.
-RUN useradd --system --create-home scgrep
+# Run as an unprivileged user; give it a writable log directory (used when
+# LOG_FILE is set and no volume is mounted over it).
+RUN useradd --system --create-home scgrep \
+    && mkdir -p /var/log/scgrep \
+    && chown scgrep:scgrep /var/log/scgrep
 USER scgrep
 
 # Prometheus metrics port (see METRICS_PORT).

@@ -26,6 +26,7 @@ network (`traefik`):
 | `traefik` | `traefik:v3.1` | TLS termination and ingress for the metrics endpoint and Grafana-independent dashboard |
 | `prometheus` | `prom/prometheus:v3` | scrapes `scgrep:8000/metrics` |
 | `grafana` | `grafana/grafana` | dashboards over the Prometheus data |
+| `log-purge` | `scgrep` image | hourly job that trims the shared log file (`scripts/purge_logs.py`) |
 
 `scgrep` does not publish a port; Traefik reaches it by service name
 (`scgrep:8000`) over the shared network and serves `/metrics` over HTTPS.
@@ -196,9 +197,13 @@ The scheduler waits one full `TEST_INTERVAL` before the first cycle, then runs
 cycles back-to-back **without overlap** (each cycle completes at ~95% of the
 interval, then the loop sleeps the remainder). `SIGTERM`/`SIGINT` stop the loop
 and disconnect cleanly. It also configures logging (`LOG_LEVEL`, default `INFO`)
-with a timestamped format; the detailed activity logs (connections, messages,
+with a UTC-timestamped format; the detailed activity logs (connections, messages,
 requests/responses, per-result summaries) are at `INFO` — see the
-[README](README.md#logging).
+[README](README.md#logging). When `LOG_FILE` is set, records are also buffered
+and written to that file every `LOG_FILE_FLUSH_INTERVAL` seconds via a
+`MemoryHandler` → `WatchedFileHandler`; the latter reopens the file if it is
+replaced, so the hourly `scripts/purge_logs.py` (the `log-purge` service) can
+trim old entries in place while the app keeps writing.
 
 ### `util.py` — shared helpers
 
