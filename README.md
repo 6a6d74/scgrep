@@ -1,6 +1,6 @@
 # SCGRep — Sensor Centre Global Replay service
 
-[![tests](https://github.com/6a6d74/scgrep/actions/workflows/tests.yml/badge.svg)](https://github.com/6a6d74/scgrep/actions/workflows/tests.yml)
+[![tests](https://github.com/6a6d74/wis2-scgrep/actions/workflows/tests.yml/badge.svg)](https://github.com/6a6d74/wis2-scgrep/actions/workflows/tests.yml)
 
 SCGRep is a [WIS2](https://community.wmo.int/en/activity-areas/wis) **Sensor
 Centre** that continuously measures the real-time performance of one or more

@@ -314,6 +314,6 @@ and the Prometheus client is itself thread-safe.
 ## Limitations
 
 See the [README](README.md#limitations) and the open
-[issues](https://github.com/6a6d74/scgrep/issues) — notably supporting replay
+[issues](https://github.com/6a6d74/wis2-scgrep/issues) — notably supporting replay
 delivery beyond a single Global Replay instance, and provisioning a
 publicly-trusted TLS certificate for non-local deployments.
