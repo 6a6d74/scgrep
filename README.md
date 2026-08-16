@@ -176,6 +176,16 @@ by message `pubtime`, and the Global Replay `datetime` filter does too.
      --since 2026-08-16T13:30:00Z --until 2026-08-16T14:00:00Z
    ```
 
+   To line up with the **Grafana metrics** instead of clock minutes, add
+   `-s summary`: it reads the per-cycle summary lines (`Test period begins:` /
+   `Result:`) and reports over the **exact tested windows** — the same values
+   SCGRep publishes to Prometheus — with both `http` (`numberMatched`) and `mqtt`
+   counts and their differences from the baseline:
+
+   ```bash
+   python scripts/replay_loss_report.py -t us-noaa-nws -s summary
+   ```
+
    A large positive difference for a window is the same signal as above: messages
    the Sensor Centre saw live that the replay service did not return.
 

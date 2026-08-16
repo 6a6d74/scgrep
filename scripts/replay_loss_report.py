@@ -46,6 +46,16 @@ REPLAY_RE = re.compile(
     r"centre_id=\S+ topic=(?P<topic>\S+) id=(?P<id>\S+) time=(?P<time>\S+)"
 )
 
+# Per-cycle summary lines (the values SCGRep publishes to Prometheus / Grafana):
+# the tested window, and the per-(centre, topic, protocol) baseline vs fetched.
+TESTPERIOD_RE = re.compile(r"Test period begins: window (?P<start>\S+) \.\. (?P<end>\S+)")
+RESULT_RE = re.compile(
+    r"Result: centre_id=(?P<centre>\S+) topic=(?P<topic>\S+) protocol=(?P<protocol>\S+) "
+    r"baseline=(?P<baseline>\d+) fetched=(?P<fetched>\d+)"
+)
+
+# --source values selecting which replayed *per-message* lines to count. The
+# additional value "summary" switches to the per-cycle summary lines instead.
 SOURCES = {
     "both": {"synchronous", "asynchronous"},
     "sync": {"synchronous"},
@@ -155,18 +165,18 @@ def print_table(rows) -> None:
     print(f"{'TOTAL':<{label_w}}  {tot_r:>8}  {tot_b:>8}  {tot_b - tot_r:>+7}")
 
 
-def print_histogram(rows, bar_width: int | None) -> None:
+def print_histogram(items, bar_width: int | None, legend: str) -> None:
+    """Render an ASCII histogram from ``(label, diff)`` pairs."""
     print()
-    print("Difference histogram (baseline − replay; '#' = messages missing from replay):")
+    print(legend)
     print()
-    max_pos = max((diff for *_, diff in rows if diff > 0), default=0)
-    label_w = max((len(window_label(m)) for m, *_ in rows), default=17)
+    max_pos = max((diff for _, diff in items if diff > 0), default=0)
+    label_w = max((len(label) for label, _ in items), default=17)
     prefix_w = label_w + len(" +0000 | ")
     if bar_width is None:
         term = shutil.get_terminal_size((100, 24)).columns
         bar_width = max(10, term - prefix_w - 1)
-    for minute, _r, _b, diff in rows:
-        label = window_label(minute)
+    for label, diff in items:
         if diff > 0 and max_pos > 0:
             bar = "#" * max(1, round(diff / max_pos * bar_width))
         elif diff < 0:
@@ -174,6 +184,118 @@ def print_histogram(rows, bar_width: int | None) -> None:
         else:
             bar = ""
         print(f"{label:<{label_w}}  {diff:>+5} | {bar}")
+
+
+# --- summary mode: per-cycle Result lines over the exact tested windows -------
+def scan_summary(lines, topic: str):
+    """Parse the per-cycle summary lines into per-(window, centre, topic) counts.
+
+    Returns a dict keyed ``(window_start, window_end, centre, topic)`` with
+    ``{'baseline','http','mqtt'}`` — the same values SCGRep publishes to
+    Prometheus, over the exact tested windows (not clock minutes)."""
+    records: dict[tuple, dict[str, int]] = {}
+    window: tuple[datetime, datetime] | None = None
+    for line in lines:
+        period = TESTPERIOD_RE.search(line)
+        if period:
+            start = parse_pubtime(period["start"])
+            end = parse_pubtime(period["end"])
+            window = (start, end) if start and end else None
+            continue
+        result = RESULT_RE.search(line)
+        if result and window is not None and topic in result["topic"]:
+            key = (window[0], window[1], result["centre"], result["topic"])
+            rec = records.setdefault(key, {"baseline": 0, "http": 0, "mqtt": 0})
+            rec["baseline"] = int(result["baseline"])
+            if result["protocol"] in ("http", "mqtt"):
+                rec[result["protocol"]] = int(result["fetched"])
+    return records
+
+
+def window_bounds_summary(args, records):
+    """Resolve the [since, until] range (on window start) for summary mode."""
+    starts = [key[0] for key in records]
+    if not starts:
+        return None, None
+    until = floor_minute(parse_pubtime(args.until)) if args.until else max(starts)
+    if args.since:
+        since = parse_pubtime(args.since)
+    else:
+        since = until - timedelta(minutes=args.minutes)
+    return since, until
+
+
+def build_summary_rows(records, since, until):
+    """Aggregate matching series per tested window: (start, end, http, mqtt, baseline).
+
+    Series matching the topic are summed per window (as Grafana sums a multi-topic
+    selection); rows with no activity are skipped."""
+    agg: dict[tuple, list[int]] = {}
+    for (start, end, _centre, _topic), rec in records.items():
+        if start < since or start > until:
+            continue
+        totals = agg.setdefault((start, end), [0, 0, 0])
+        totals[0] += rec["baseline"]
+        totals[1] += rec["http"]
+        totals[2] += rec["mqtt"]
+    rows = [
+        (start, end, http, mqtt, baseline)
+        for (start, end), (baseline, http, mqtt) in agg.items()
+        if not (baseline == 0 and http == 0 and mqtt == 0)
+    ]
+    rows.sort()
+    return rows
+
+
+def summary_label(start: datetime, end: datetime) -> str:
+    return f"{start:%Y-%m-%d %H:%M:%S}–{end:%H:%M:%S}"
+
+
+def print_summary_table(rows) -> None:
+    label_w = max((len(summary_label(s, e)) for s, e, *_ in rows), default=23)
+    header = (f"{'Pub-time window (UTC)':<{label_w}}  {'Baseline':>8}  {'http':>6}  "
+              f"{'mqtt':>6}  {'httpΔ':>6}  {'mqttΔ':>6}")
+    print(header)
+    print("-" * len(header))
+    tot_b = tot_h = tot_m = 0
+    for start, end, http, mqtt, baseline in rows:
+        print(f"{summary_label(start, end):<{label_w}}  {baseline:>8}  {http:>6}  "
+              f"{mqtt:>6}  {baseline - http:>+6}  {baseline - mqtt:>+6}")
+        tot_b += baseline
+        tot_h += http
+        tot_m += mqtt
+    print("-" * len(header))
+    print(f"{'TOTAL':<{label_w}}  {tot_b:>8}  {tot_h:>6}  {tot_m:>6}  "
+          f"{tot_b - tot_h:>+6}  {tot_b - tot_m:>+6}")
+
+
+def run_summary(args, paths) -> int:
+    records = scan_summary(iter_log_lines(paths), args.topic)
+    since, until = window_bounds_summary(args, records)
+    if since is None:
+        print(f"No summary lines found for topic '{args.topic}' in: {', '.join(paths)}",
+              file=sys.stderr)
+        return 1
+    series = sorted({(c, t) for (s, _e, c, t) in records if since <= s <= until})
+    rows = build_summary_rows(records, since, until)
+
+    print(f"Topic:  {args.topic}    Source: summary (per tested window)")
+    print(f"Window: {since:%Y-%m-%d %H:%M:%S} .. {until:%Y-%m-%d %H:%M:%S} UTC "
+          f"(window starts)")
+    for centre, topic in series:
+        print(f"Series: {centre}  {topic}")
+    print()
+    if not rows:
+        print("No tested windows with activity in the selected range.")
+        return 0
+    print_summary_table(rows)
+    print_histogram(
+        [(summary_label(s, e), b - h) for s, e, h, _m, b in rows],
+        args.bar_width,
+        "Difference histogram (baseline − http numberMatched; "
+        "'#' = messages missing from replay):",
+    )
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -194,6 +316,8 @@ def build_parser() -> argparse.ArgumentParser:
             "  # an explicit pub-time window (UTC)\n"
             "  replay_loss_report.py -t int-eumetsat \\\n"
             "      --since 2026-08-16T12:00:00Z --until 2026-08-16T13:00:00Z\n\n"
+            "  # per-cycle summary, to line up with the Grafana metrics\n"
+            "  replay_loss_report.py -t us-noaa-nws -s summary\n\n"
             "The topic is matched as a substring of the log's topic= field, so "
             "'us-noaa-nws' matches both the concrete baseline topics and the "
             "'.../#' replay wildcard."
@@ -212,9 +336,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="length of the reporting window in minutes (default: 60)",
     )
     parser.add_argument(
-        "-s", "--source", choices=sorted(SOURCES), default="both",
-        help="which replayed messages to count: synchronous, asynchronous, or "
-             "both, de-duplicated by id (default: both)",
+        "-s", "--source", choices=[*sorted(SOURCES), "summary"], default="both",
+        help="what to count. Per-message modes count individual replayed messages "
+             "(de-duplicated by id) into clock-minute buckets: 'both' (default), "
+             "'sync', or 'async'. 'summary' instead reads the per-cycle summary "
+             "lines (baseline / fetched) over the exact tested windows, so counts "
+             "match the Prometheus/Grafana metrics.",
     )
     parser.add_argument(
         "--since", metavar="ISO8601",
@@ -240,6 +367,9 @@ def main(argv: list[str] | None = None) -> int:
         matches = glob.glob(pattern)
         paths.extend(matches if matches else [pattern])
 
+    if args.source == "summary":
+        return run_summary(args, paths)
+
     baseline, replay = scan(iter_log_lines(paths), args.topic, SOURCES[args.source])
     since, until = window_bounds(args, baseline, replay)
     if since is None:
@@ -257,7 +387,10 @@ def main(argv: list[str] | None = None) -> int:
         print("No baseline or replay messages in the selected window.")
         return 0
     print_table(rows)
-    print_histogram(rows, args.bar_width)
+    print_histogram(
+        [(window_label(m), diff) for m, _r, _b, diff in rows], args.bar_width,
+        "Difference histogram (baseline − replay; '#' = messages missing from replay):",
+    )
     return 0
 
 

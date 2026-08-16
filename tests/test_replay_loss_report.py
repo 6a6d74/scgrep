@@ -101,6 +101,68 @@ def test_window_bounds_default_anchors_to_latest_replay():
     assert since == datetime(2026, 8, 16, 12, 16, tzinfo=timezone.utc)  # 3-min window
 
 
+def _period(start, end):
+    return (f"2026-08-16 12:15:00,000 INFO [scgrep.test_cycle] Test period begins: "
+            f"window {start} .. {end}\n")
+
+
+def _result(centre, topic, protocol, baseline, fetched):
+    return (f"2026-08-16 12:15:00,000 INFO [scgrep.test_cycle] Result: "
+            f"centre_id={centre} topic={topic} protocol={protocol} "
+            f"baseline={baseline} fetched={fetched} delay_ms=100 aborted=0 "
+            f"invalid_format=0 invalid_numberMatched=0\n")
+
+
+def test_scan_summary_pairs_window_with_results():
+    topic = "cache/a/wis2/us-noaa-nws/#"
+    lines = [
+        _period("2026-08-16T12:08:52Z", "2026-08-16T12:09:52Z"),
+        _result("ca-eccc", topic, "http", 420, 251),
+        _result("ca-eccc", topic, "mqtt", 420, 240),
+        _result("ca-eccc", "cache/a/wis2/uk-metoffice/#", "http", 6, 6),  # other topic
+    ]
+    records = rlr.scan_summary(lines, "us-noaa-nws")
+    start = datetime(2026, 8, 16, 12, 8, 52, tzinfo=timezone.utc)
+    end = datetime(2026, 8, 16, 12, 9, 52, tzinfo=timezone.utc)
+    assert records[(start, end, "ca-eccc", topic)] == {
+        "baseline": 420, "http": 251, "mqtt": 240}
+    assert len(records) == 1  # uk-metoffice excluded by the topic filter
+
+
+def test_build_summary_rows_aggregates_and_skips_empty():
+    s1 = datetime(2026, 8, 16, 12, 8, 52, tzinfo=timezone.utc)
+    e1 = datetime(2026, 8, 16, 12, 9, 52, tzinfo=timezone.utc)
+    s2 = datetime(2026, 8, 16, 12, 9, 52, tzinfo=timezone.utc)
+    e2 = datetime(2026, 8, 16, 12, 10, 52, tzinfo=timezone.utc)
+    records = {
+        # two matching series in the same window -> summed
+        (s1, e1, "c", "a"): {"baseline": 400, "http": 251, "mqtt": 240},
+        (s1, e1, "c", "b"): {"baseline": 20, "http": 0, "mqtt": 0},
+        (s2, e2, "c", "a"): {"baseline": 0, "http": 0, "mqtt": 0},  # empty -> skipped
+    }
+    rows = rlr.build_summary_rows(records, s1, e2)
+    assert rows == [(s1, e1, 251, 240, 420)]  # (start, end, http, mqtt, baseline)
+
+
+def test_run_summary_end_to_end(tmp_path, capsys):
+    log = tmp_path / "scgrep.log"
+    topic = "cache/a/wis2/us-noaa-nws/#"
+    log.write_text(
+        _period("2026-08-16T12:08:52Z", "2026-08-16T12:09:52Z")
+        + _result("ca-eccc", topic, "http", 420, 0)   # a genuine gap
+        + _result("ca-eccc", topic, "mqtt", 420, 0)
+    )
+    rc = rlr.main(["-t", "us-noaa-nws", "-s", "summary",
+                   "--since", "2026-08-16T12:00:00Z", "--until", "2026-08-16T12:30:00Z",
+                   str(log)])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "Source: summary" in out
+    assert "12:08:52–12:09:52" in out
+    assert "+420" in out  # baseline 420 - http 0
+    assert "http numberMatched" in out  # histogram legend
+
+
 def test_main_end_to_end(tmp_path, capsys):
     log = tmp_path / "scgrep.log"
     topic = "cache/a/wis2/us-noaa-nws"
