@@ -207,6 +207,31 @@ def test_all_metrics_published_together_after_fetches(monkeypatch):
     assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 2
 
 
+def test_message_counters_accumulate_across_cycles(monkeypatch):
+    """messages_received / messages_fetched are cumulative counters: each cycle
+    increments them by that cycle's count rather than overwriting it."""
+    cfg = Config.from_env(dict(ENV, TEST_INTERVAL="1"))
+    client = fakeredis.FakeRedis(decode_responses=True)
+    store = RedisStore("redis:6379", cfg.redis_expiry, cfg.subscription_topics, client=client)
+    registry = ReplayRegistry()
+    metrics = Metrics()
+
+    now = float(int(time.time()))  # window (now-11 .. now-10); whole second (see above)
+    store.store_message("a", epoch_to_iso(now - 10.5), TOPIC)  # baseline 1 per cycle
+
+    monkeypatch.setattr(tc, "sync_fetch", lambda *a, **k: FetchResult("http", False, False, 1.0, 5))
+    monkeypatch.setattr(tc, "async_fetch", lambda *a, **k: FetchResult("mqtt", False, False, 2.0, 0))
+
+    run_cycle(cfg, store, registry, metrics, now=now)
+    run_cycle(cfg, store, registry, metrics, now=now)
+
+    report_by = cfg.sensor_centre_id
+    # Two cycles, so the counters hold the sum, not the last cycle's value.
+    assert _gauge_value(metrics, metrics.messages_received, report_by=report_by, topic=TOPIC) == 2
+    http_labels = dict(report_by=report_by, centre_id=CENTRE, topic=TOPIC, protocol="http")
+    assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 10
+
+
 def test_publication_held_until_95pct_even_when_fetches_finish_early(monkeypatch):
     """Metrics publish at ~95% of the test period even if the fetches return
     instantly — publication is anchored to the cycle deadline, not fetch timing."""

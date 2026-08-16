@@ -119,8 +119,10 @@ def run_cycle(
         time.sleep(remaining)
 
     # Publish everything together so all metrics for this cycle update at once.
+    # messages_received / messages_fetched are cumulative counters: increment by
+    # this cycle's count rather than setting an absolute value.
     for topic, count in baselines.items():
-        metrics.messages_received.labels(report_by=report_by, topic=topic).set(count)
+        metrics.messages_received.labels(report_by=report_by, topic=topic).inc(count)
     for centre_id, topic, result in fetch_results:
         _publish(metrics, report_by, centre_id, topic, result)
         # Concise per-result summary for quick scanning of a cycle's outcome.
@@ -175,7 +177,8 @@ def _publish(
         1 if result.invalid_format else 0
     )
     metrics.fetch_delay.labels(**labels).set(result.fetch_delay_ms)
-    metrics.messages_fetched.labels(**labels).set(result.messages_fetched)
+    # Cumulative counter: add this cycle's fetched count.
+    metrics.messages_fetched.labels(**labels).inc(result.messages_fetched)
     # numberMatched validation applies to the synchronous (http) fetch only.
     if result.protocol == "http":
         metrics.response_invalid_number_matched.labels(**labels).set(

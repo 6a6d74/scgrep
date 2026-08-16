@@ -196,15 +196,21 @@ count); nothing about Prometheus lives here, which keeps the logic testable.
 5. For each async result, replace its count with the **deduplicated Redis count**
    (`count_replay_messages`) for the window, when the fetch was not aborted (Redis
    holds zero for a window where no messages were expected, so this is safe).
-6. **Publish every metric at once** at that 95% instant — baseline, `http`, and
+6. **Update every metric at once** at that 95% instant — baseline, `http`, and
    `mqtt` — so a single Prometheus scrape always sees a consistent set for the
-   cycle rather than a mix of old and new values.
+   cycle rather than a mix of old and new values. The two message metrics are
+   cumulative **counters** incremented by the cycle's counts (never reset), so
+   Grafana derives the per-interval value with `increase(...[60s])`; the flags and
+   delay are gauges that are set outright.
 
 ### `metrics.py` — Prometheus metrics
 
-Defines the five gauges (see the [README](README.md#metrics)) in a dedicated
-registry and serves them over a tiny WSGI HTTP server at `METRICS_ENDPOINT` on
-`METRICS_PORT`, in a daemon thread.
+Defines the metrics (see the [README](README.md#metrics)) in a dedicated registry
+and serves them over a tiny WSGI HTTP server at `METRICS_ENDPOINT` on
+`METRICS_PORT`, in a daemon thread. The two `messages_*_during_interval_total`
+metrics are cumulative `Counter`s (named without the `_total` suffix, which
+prometheus_client appends); the rest are `Gauge`s. Prometheus scrapes every 15s
+so a 60s `increase()` window spans several samples.
 
 ### `main.py` — wiring and the scheduler
 

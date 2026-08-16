@@ -6,15 +6,25 @@ import logging
 import threading
 from wsgiref.simple_server import WSGIRequestHandler, make_server
 
-from prometheus_client import CollectorRegistry, Gauge, make_wsgi_app
+from prometheus_client import (
+    CollectorRegistry,
+    Counter,
+    Gauge,
+    disable_created_metrics,
+    make_wsgi_app,
+)
 
 logger = logging.getLogger(__name__)
 
 _METRIC_PREFIX = "wmo_wis2_scgrep_"
 
+# The message counters are true Counters; suppress the companion ``_created``
+# timestamp series so the exposition stays limited to the documented metrics.
+disable_created_metrics()
+
 
 class Metrics:
-    """Container for the SCGRep Prometheus gauges.
+    """Container for the SCGRep Prometheus metrics (counters and gauges).
 
     A dedicated :class:`~prometheus_client.CollectorRegistry` is used so the
     metrics are isolated from the process-global default registry (which keeps
@@ -24,17 +34,22 @@ class Metrics:
     def __init__(self, registry: CollectorRegistry | None = None) -> None:
         self.registry = registry or CollectorRegistry()
 
-        self.messages_received = Gauge(
-            _METRIC_PREFIX + "messages_received_during_interval_total",
-            "Total messages received from Global Brokers on the topic during "
-            "the test period",
+        # Cumulative counters (never reset per cycle): each test period increments
+        # them by that period's count, so they grow monotonically. The name is
+        # given without the ``_total`` suffix because prometheus_client appends it
+        # for counters, yielding ``..._during_interval_total`` in the exposition.
+        # Use increase(...[60s]) in queries to recover a per-interval value.
+        self.messages_received = Counter(
+            _METRIC_PREFIX + "messages_received_during_interval",
+            "Cumulative messages received from Global Brokers on the topic; "
+            "incremented by each test period's count",
             ["report_by", "topic"],
             registry=self.registry,
         )
-        self.messages_fetched = Gauge(
-            _METRIC_PREFIX + "messages_fetched_during_interval_total",
-            "Total messages retrieved from the Global Replay service on the "
-            "topic during the test period",
+        self.messages_fetched = Counter(
+            _METRIC_PREFIX + "messages_fetched_during_interval",
+            "Cumulative messages retrieved from the Global Replay service on the "
+            "topic; incremented by each test period's count",
             ["report_by", "centre_id", "topic", "protocol"],
             registry=self.registry,
         )

@@ -33,14 +33,14 @@ moment its metric is plotted:
      the past, so a message's pub-time is already ``TIME_LAG`` behind when tested.
   2. ``TEST_INTERVAL`` (e.g. 60s) -- metrics are published only at the *end* of
      the test period.
-  3. Prometheus scrape interval (e.g. 60s) -- the published value is not stored
+  3. Prometheus scrape interval (e.g. 15s) -- the published value is not stored
      until the next scrape.
   4. Grafana rounding (~15s) -- data points are aligned to the nearest 15 seconds.
 
-With the example values above that is 300 + 60 + 60 + 15 s, so an issue seen at
-time *T* in this report appears at roughly *T + 8 minutes* on the dashboard. Also,
-this report is in **UTC**, whereas Grafana usually renders in the **browser's
-local time** -- so account for that offset too when lining the two up.
+With the example values above that is 300 + 60 + 15 + 15 s, so an issue seen at
+time *T* in this report appears at roughly *T + 6-7 minutes* on the dashboard.
+Also, this report is in **UTC**, whereas Grafana usually renders in the
+**browser's local time** -- so account for that offset too when lining the two up.
 
 Everything is standard-library only; run with ``-h`` / ``--help`` for usage.
 """
@@ -344,9 +344,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  Windows here are EARLIER than where the same issue appears on the\n"
             "  Grafana dashboard. Between a message's pub-time and its plotted\n"
             "  metric sit TIME_LAG (e.g. 300s), the TEST_INTERVAL until metrics are\n"
-            "  published (e.g. 60s), the Prometheus scrape interval (e.g. 60s) and\n"
-            "  Grafana's ~15s rounding -- roughly 8 minutes in total. This report is\n"
-            "  in UTC; Grafana usually shows local time. Account for both offsets."
+            "  published (e.g. 60s), the Prometheus scrape interval (e.g. 15s) and\n"
+            "  Grafana's ~15s rounding -- roughly 6-7 minutes in total. This report\n"
+            "  is in UTC; Grafana usually shows local time. Account for both offsets."
         ),
     )
     parser.add_argument(
