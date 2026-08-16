@@ -216,7 +216,10 @@ def test_publication_held_until_95pct_even_when_fetches_finish_early(monkeypatch
     registry = ReplayRegistry()
     metrics = Metrics()
 
-    now = time.time()  # window is (now-11 .. now-10) for TIME_LAG=10, TEST_INTERVAL=1
+    # Anchor now to a whole second: the window is only 1s wide (TEST_INTERVAL=1)
+    # and epoch_to_iso truncates to seconds, so this keeps the seeded replay
+    # messages deterministically inside (now-11 .. now-10).
+    now = float(int(time.time()))
     monkeypatch.setattr(tc, "sync_fetch", lambda *a, **k: FetchResult("http", False, False, 1.0, 5))
 
     def fake_async(*a, **k):

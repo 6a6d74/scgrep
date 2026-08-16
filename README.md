@@ -158,6 +158,27 @@ by message `pubtime`, and the Global Replay `datetime` filter does too.
    the replay is well below the baseline (or `0`) is a genuine gap to raise with
    the Global Replay operators.
 
+4. **Or let the log do it for you.** `scripts/replay_loss_report.py` performs the
+   same minute-by-minute comparison directly from the SCGRep log files — no live
+   queries needed. For a topic it tabulates, per one-minute pub-time window, the
+   replayed-message count, the baseline count, and their difference, then draws an
+   ASCII histogram of the difference. Both counts come from the per-message log
+   lines (`Global Broker message:` and `Replay message (…):`), de-duplicated by
+   `id`; note that per-message replay logging only exists from when that feature
+   was deployed, so windows older than that show `0` replayed.
+
+   ```bash
+   # last hour for a topic, from ./logs/scgrep.log (see -h for all options)
+   python scripts/replay_loss_report.py -t us-noaa-nws
+
+   # a specific window, synchronous replay only
+   python scripts/replay_loss_report.py -t us-noaa-nws -s sync \
+     --since 2026-08-16T13:30:00Z --until 2026-08-16T14:00:00Z
+   ```
+
+   A large positive difference for a window is the same signal as above: messages
+   the Sensor Centre saw live that the replay service did not return.
+
 **Gotchas that make a real result look like a bug:**
 
 - **`docker logs scgrep` only shows the *current* container.** After any
