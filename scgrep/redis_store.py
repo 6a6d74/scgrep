@@ -152,3 +152,48 @@ class RedisStore:
         ]
         if keys:
             self._redis.delete(*keys)
+
+    # -- Synchronous (OGC Features) message records -----------------------
+    #
+    # Messages returned by the synchronous fetch are recorded like the async
+    # replay messages, in their own ``scgrep:sync:<centre>:<pattern>`` keyspace so
+    # they never clash with the baseline or the (MQTT) replay records.
+
+    @staticmethod
+    def _sync_key(centre_id: str, pattern: str) -> str:
+        return f"scgrep:sync:{centre_id}:{pattern}"
+
+    def store_sync_message(
+        self, centre_id: str, pattern: str, msg_id: str, time_value: str
+    ) -> bool:
+        """Record one synchronously-fetched message; True if newly stored."""
+        try:
+            epoch = parse_time_to_epoch(time_value)
+        except (ValueError, TypeError):
+            return False
+        key = self._sync_key(centre_id, pattern)
+        pipe = self._redis.pipeline()
+        pipe.zadd(key, {msg_id: epoch})
+        pipe.expire(key, self._expiry)
+        added, _ = pipe.execute()
+        return bool(added)
+
+    def count_sync_messages(
+        self, centre_id: str, pattern: str, start_epoch: float, end_epoch: float
+    ) -> int:
+        """Count synchronously-fetched messages for a centre/topic within a window."""
+        return int(
+            self._redis.zcount(
+                self._sync_key(centre_id, pattern), start_epoch, end_epoch
+            )
+        )
+
+    def clear_sync(self, centre_ids: list[str]) -> None:
+        """Delete synchronous message sets at the start of a test cycle."""
+        keys = [
+            self._sync_key(centre_id, pattern)
+            for centre_id in centre_ids
+            for pattern in self._topics
+        ]
+        if keys:
+            self._redis.delete(*keys)

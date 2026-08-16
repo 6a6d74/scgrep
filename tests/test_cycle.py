@@ -50,7 +50,20 @@ def test_run_cycle_publishes_all_metrics():
     store.store_message("b", in_window, TOPIC)
 
     channel = f"replay/a/wis2/{CENTRE}/{cfg.subscriber_id}/{TOPIC}"
-    responses.add(responses.GET, ITEMS_URL, json={"numberMatched": 7}, status=200)
+    responses.add(
+        responses.GET, ITEMS_URL,
+        json={
+            "type": "FeatureCollection",
+            "numberMatched": 7,
+            "features": [
+                {"type": "Feature", "id": f"h{i}",
+                 "properties": {"pubtime": "2026-08-16T09:00:00Z"}}
+                for i in range(7)
+            ],
+            "links": [],
+        },
+        status=200,
+    )
     responses.add(
         responses.POST, EXEC_URL,
         json={

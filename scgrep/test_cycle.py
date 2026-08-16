@@ -58,10 +58,10 @@ def run_cycle(
         for topic in config.subscription_topics
     }
 
-    # Clean sheet for this cycle's replay counting, before any process is
-    # triggered, so replay messages are counted (deduplicated across brokers)
-    # against a fresh set.
+    # Clean sheet for this cycle, before any request is made: replay message
+    # records (for the deduplicated mqtt count) and synchronous message records.
     store.clear_replay(config.replay_centre_ids)
+    store.clear_sync(config.replay_centre_ids)
 
     # Fan out all fetches (the slow part) in parallel and collect their results;
     # nothing is published until every fetch has completed.
@@ -73,7 +73,8 @@ def run_cycle(
             for centre_id, replay_url in config.replay_targets:
                 futures[ex.submit(
                     sync_fetch, replay_url, centre_id, topic, start_iso, end_iso,
-                    deadline_s, config.log_http_response_max_chars, deadline_at,
+                    deadline_s, store, config.log_http_response_max_chars,
+                    deadline_at,
                 )] = (centre_id, topic)
                 futures[ex.submit(
                     async_fetch, replay_url, centre_id, topic, config.subscriber_id,
@@ -112,10 +113,11 @@ def run_cycle(
         # Concise per-result summary for quick scanning of a cycle's outcome.
         logger.info(
             "Result: centre_id=%s topic=%s protocol=%s baseline=%d fetched=%d "
-            "delay_ms=%.0f aborted=%d invalid_format=%d",
+            "delay_ms=%.0f aborted=%d invalid_format=%d invalid_numberMatched=%d",
             centre_id, topic, result.protocol, baselines.get(topic, 0),
             result.messages_fetched, result.fetch_delay_ms,
             int(result.aborted), int(result.invalid_format),
+            int(result.invalid_number_matched),
         )
 
     logger.info("Test period complete: window %s .. %s", start_iso, end_iso)
@@ -140,3 +142,8 @@ def _publish(
     )
     metrics.fetch_delay.labels(**labels).set(result.fetch_delay_ms)
     metrics.messages_fetched.labels(**labels).set(result.messages_fetched)
+    # numberMatched validation applies to the synchronous (http) fetch only.
+    if result.protocol == "http":
+        metrics.response_invalid_number_matched.labels(**labels).set(
+            1 if result.invalid_number_matched else 0
+        )

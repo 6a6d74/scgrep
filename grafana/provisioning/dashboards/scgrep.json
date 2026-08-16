@@ -3,7 +3,7 @@
   "title": "SCGRep - Global Replay performance",
   "tags": ["scgrep", "wis2"],
   "schemaVersion": 39,
-  "version": 3,
+  "version": 4,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -179,6 +179,30 @@
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_response_invalid_format_flag{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}", "legendFormat": "http - {{topic}}" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_response_invalid_format_flag{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}", "legendFormat": "mqtt - {{topic}}" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "7. Synchronous fetch validation - invalid numberMatched",
+      "description": "1 when the number of messages returned by the synchronous (http) fetch did not equal numberMatched. Applies to the synchronous fetch only.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 36 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "min": 0,
+          "max": 1,
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 1, "fillOpacity": 20, "showPoints": "auto", "spanNulls": false }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_response_invalid_numberMatched_flag{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}", "legendFormat": "http - {{topic}}" }
       ]
     }
   ]

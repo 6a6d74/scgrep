@@ -102,3 +102,24 @@ def test_replay_window_filtering(store):
     store.store_replay_message("c1", "old", iso_ago(200), "monitor/a/wis2/ca-eccc-msc")
     store.store_replay_message("c1", "new", iso_ago(60), "monitor/a/wis2/ca-eccc-msc")
     assert store.count_replay_messages("c1", "monitor/a/wis2/ca-eccc-msc", now - 120, now) == 1
+
+
+def test_sync_store_count_and_clear(store):
+    now = time.time()
+    store.store_sync_message("c1", "cache/a/wis2/ca-eccc-msc/data/#", "s1", iso_ago(60))
+    store.store_sync_message("c1", "cache/a/wis2/ca-eccc-msc/data/#", "s2", iso_ago(50))
+    assert store.count_sync_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 2
+    store.clear_sync(["c1"])
+    assert store.count_sync_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 0
+
+
+def test_sync_separate_from_baseline_and_replay(store):
+    now = time.time()
+    iso = iso_ago(60)
+    # Same id across baseline / replay / sync keyspaces must not clash.
+    store.store_message("id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    store.store_replay_message("c1", "id-1", iso, "cache/a/wis2/ca-eccc-msc/data/x")
+    store.store_sync_message("c1", "cache/a/wis2/ca-eccc-msc/data/#", "id-1", iso)
+    assert store.count_messages("cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 1
+    assert store.count_replay_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 1
+    assert store.count_sync_messages("c1", "cache/a/wis2/ca-eccc-msc/data/#", now - 600, now) == 1

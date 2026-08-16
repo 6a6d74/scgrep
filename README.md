@@ -51,6 +51,7 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 | `wmo_wis2_scgrep_test_aborted_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if retrieval exceeded the test period. |
 | `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Milliseconds to first byte / first message. |
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
+| `wmo_wis2_scgrep_response_invalid_numberMatched_flag` | `report_by`, `centre_id`, `topic`, `protocol` | **Synchronous (`http`) fetch only:** `1` if the number of messages actually returned (across all pages) did not equal `numberMatched`. |
 
 `protocol` is `http` (synchronous) or `mqtt` (asynchronous).
 
@@ -139,21 +140,26 @@ so it is always captured unless explicitly turned off with `LOG_LEVEL=WARNING`
 - **Test period start/finish** — the window each period covers.
 - **Unique broker messages** — every newly-seen message from the Global Brokers
   (`topic`, `id`, `time`); duplicates that are discarded are not logged.
-- **Unique replay messages** — every newly-seen replay message
-  (`centre_id`, `topic`, `id`, `time`); duplicates from other replay brokers are
-  not logged.
+- **Replay messages** — one line per message returned by a Global Replay service
+  (`centre_id`, `topic`, `id`, `time`), tagged `Replay message (asynchronous)`
+  for MQTT-delivered messages (duplicates from other replay brokers are not
+  logged) and `Replay message (synchronous)` for every Feature in a synchronous
+  response.
 - **Requests** to a Global Replay service — `centre_id`, type (synchronous /
   asynchronous), topic, datetime interval, and the full request (the POST payload
-  for asynchronous requests; HTTP headers are not logged).
+  for asynchronous requests; each page of a synchronous response is a separate
+  logged request; HTTP headers are not logged).
 - **Responses** — `centre_id`, type, topic, and the response body truncated at
   `LOG_HTTP_RESPONSE_MAX_CHARS`.
-- **`numberMatched`** extracted from each synchronous response.
+- **`numberMatched`** extracted from each synchronous response's first page.
 - **Per-result summary** — one line per (service, topic): baseline, fetched,
-  fetch delay, and the aborted / invalid-format flags.
+  fetch delay, and the aborted / invalid-format / invalid-numberMatched flags.
 
-Emitted at `WARNING` (always shown): **aborted tests** (synchronous timeout or no
-replay within the deadline), **malformed / invalid responses**, failed process
-executions, and broker disconnects.
+Emitted at `WARNING`/`ERROR` (always shown): **aborted tests** (synchronous
+timeout or no replay within the deadline), **malformed / invalid responses**,
+failed process executions, broker disconnects, and a **`numberMatched` mismatch**
+(the synchronous fetch returned a different number of messages than
+`numberMatched`).
 
 Timestamps are **UTC**.
 
@@ -305,6 +311,7 @@ crosshair, so a hover lines up across all of them:
 | 4 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
 | 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = the fetch exceeded the test period |
 | 6 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
+| 7 | **Synchronous fetch validation** | `http` invalid-numberMatched flag (0/1) | 1 = the synchronous fetch returned a different message count than `numberMatched` |
 
 Because the baseline (`messages_received`) has no `centre_id` label, panels 1–3
 filter it by topic only; the `http`/`mqtt` series filter by both service and
@@ -423,13 +430,19 @@ pytest
 
 ## Limitations
 
-SCGRep does **not**: 
+SCGRep does **not**:
 
-- test message filtering beyond datetime and topic; 
-- validate the schema of returned Notification/Event messages; 
-- match messages by `id` (it only counts the number of messages return);
-- actually count the messages returned in a synchronous requests (it uses the value of `numberMatched` from the JSON response); 
-- deeply validate the OGC API - Features response (it only checks for `numberMatched`).
+- test message filtering beyond datetime and topic;
+- validate the schema of the returned Notification/Event messages;
+- reconcile the actual message **ids** across the baseline, synchronous and
+  asynchronous results — it records the ids of every message in Redis and
+  compares *counts*, but does not yet match the id sets against one another.
+
+The `messages_fetched` metric for the synchronous (`http`) fetch reports
+`numberMatched`. SCGRep now additionally pages through the whole result set,
+counts the messages actually returned, records each in Redis, and flags any
+mismatch with `numberMatched` via
+`wmo_wis2_scgrep_response_invalid_numberMatched_flag`.
 
 The Global Replay Feature API exposes a single collection
 (`wis2-notification-messages`) which in practice also carries WIS2 Monitoring

@@ -72,7 +72,7 @@ class MessageHandler:
             centre_id, msg_id, time_value, original_topic
         ):
             logger.info(
-                "Replay message: centre_id=%s topic=%s id=%s time=%s",
+                "Replay message (asynchronous): centre_id=%s topic=%s id=%s time=%s",
                 centre_id, original_topic, msg_id, time_value,
             )
 

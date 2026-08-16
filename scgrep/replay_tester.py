@@ -11,15 +11,21 @@ import json
 import logging
 import time
 from dataclasses import dataclass
+from urllib.parse import urljoin
 
 import requests
 
+from .redis_store import RedisStore
 from .replay_registry import ReplayRegistry
 from .util import broker_authority
 
 logger = logging.getLogger(__name__)
 
 _HEADERS = {"accept": "application/json", "Content-Type": "application/json"}
+
+# Safety cap on synchronous paging, so a malformed `next` link cannot loop
+# forever (the fetch deadline also bounds paging).
+_MAX_PAGES = 10_000
 
 
 def _truncate(text: str, max_chars: int) -> str:
@@ -38,6 +44,24 @@ class FetchResult:
     invalid_format: bool
     fetch_delay_ms: float
     messages_fetched: int
+    # http only: the count of features actually returned did not match
+    # numberMatched. Always False for mqtt.
+    invalid_number_matched: bool = False
+
+
+def _next_page_href(page: object) -> str | None:
+    """Return the ``rel: next`` link href from a Feature Collection, or None."""
+    if not isinstance(page, dict):
+        return None
+    links = page.get("links")
+    if not isinstance(links, list):
+        return None
+    for link in links:
+        if isinstance(link, dict) and link.get("rel") == "next":
+            href = link.get("href")
+            if isinstance(href, str) and href:
+                return href
+    return None
 
 
 def sync_fetch(
@@ -47,38 +71,53 @@ def sync_fetch(
     start_iso: str,
     end_iso: str,
     deadline_s: float,
+    store: RedisStore,
     max_chars: int = 1000,
     deadline_at: float | None = None,
 ) -> FetchResult:
     """Synchronous fetch via OGC API - Features.
 
+    Retrieves the full result set, paging through ``rel: next`` links, and for
+    every returned Feature: counts it, records it in Redis (via
+    ``store_sync_message``), and logs it. ``numberMatched`` is read from the first
+    page only; when all pages are in, the count of returned messages is compared
+    with ``numberMatched`` and any mismatch is flagged (and logged as an error).
+
     ``deadline_s`` is 95% of ``TEST_INTERVAL`` and sets the aborted fetch-delay
-    value. ``deadline_at`` is an absolute ``time.monotonic()`` instant at which
-    to stop; when omitted it defaults to ``now + deadline_s``. Passing a shared
+    value. ``deadline_at`` is an absolute ``time.monotonic()`` instant at which to
+    stop; when omitted it defaults to ``now + deadline_s``. A shared
     ``deadline_at`` lets every fetch in a cycle stop at the same moment.
     ``max_chars`` caps how much of the HTTP response body is logged.
     """
-    url = f"{replay_url}/collections/wis2-notification-messages/items"
-    params = {"datetime": f"{start_iso}/{end_iso}", "topic": topic}
-    aborted_delay_ms = deadline_s * 1000
     interval = f"{start_iso}/{end_iso}"
-
-    logger.info(
-        "Global Replay request: centre_id=%s type=synchronous topic=%s interval=%s "
-        "request=%s",
-        centre_id, topic, interval,
-        f"GET {url}?datetime={interval}&topic={topic}",
-    )
+    base_url = f"{replay_url}/collections/wis2-notification-messages/items"
+    first_url = f"{base_url}?datetime={interval}&topic={topic}"
+    aborted_delay_ms = deadline_s * 1000
 
     start = time.monotonic()
     if deadline_at is None:
         deadline_at = start + deadline_s
-    timeout = max(0.05, deadline_at - start)
+
+    def log_request(request_line: str) -> None:
+        logger.info(
+            "Global Replay request: centre_id=%s type=synchronous topic=%s "
+            "interval=%s request=%s",
+            centre_id, topic, interval, request_line,
+        )
+
+    def log_response(body_text: str) -> None:
+        logger.info(
+            "Global Replay response: centre_id=%s type=synchronous topic=%s "
+            "response=%s",
+            centre_id, topic, _truncate(body_text, max_chars),
+        )
+
+    # --- first page: measure time-to-first-byte and read numberMatched -------
+    log_request(f"GET {first_url}")
     try:
-        # stream=True returns as soon as response headers arrive, giving a
-        # good proxy for time-to-first-byte; timeout bounds it at the deadline.
         resp = requests.get(
-            url, params=params, headers=_HEADERS, stream=True, timeout=timeout
+            base_url, params={"datetime": interval, "topic": topic},
+            headers=_HEADERS, stream=True, timeout=max(0.05, deadline_at - start),
         )
     except requests.RequestException as exc:
         logger.warning(
@@ -88,18 +127,14 @@ def sync_fetch(
         return FetchResult("http", True, True, aborted_delay_ms, 0)
 
     ttfb_ms = (time.monotonic() - start) * 1000
-
     try:
         body_text = resp.text
     finally:
         resp.close()
-    logger.info(
-        "Global Replay response: centre_id=%s type=synchronous topic=%s response=%s",
-        centre_id, topic, _truncate(body_text, max_chars),
-    )
+    log_response(body_text)
 
     try:
-        body = json.loads(body_text)
+        page = json.loads(body_text)
     except ValueError:
         logger.warning(
             "Global Replay synchronous response is not JSON: centre_id=%s topic=%s",
@@ -107,7 +142,7 @@ def sync_fetch(
         )
         return FetchResult("http", False, True, ttfb_ms, 0)
 
-    number_matched = body.get("numberMatched") if isinstance(body, dict) else None
+    number_matched = page.get("numberMatched") if isinstance(page, dict) else None
     if number_matched is None:
         logger.warning(
             "Global Replay synchronous response missing numberMatched: "
@@ -115,9 +150,8 @@ def sync_fetch(
             centre_id, topic,
         )
         return FetchResult("http", False, True, ttfb_ms, 0)
-
     try:
-        count = int(number_matched)
+        number_matched = int(number_matched)
     except (ValueError, TypeError):
         logger.warning(
             "Global Replay synchronous numberMatched not an integer (%r): "
@@ -128,9 +162,88 @@ def sync_fetch(
 
     logger.info(
         "Global Replay numberMatched: centre_id=%s topic=%s numberMatched=%d",
-        centre_id, topic, count,
+        centre_id, topic, number_matched,
     )
-    return FetchResult("http", False, False, ttfb_ms, count)
+
+    # --- walk every page, counting/storing/logging each returned message -----
+    messages_seen = 0
+    page_url = first_url
+    for _ in range(_MAX_PAGES):
+        messages_seen += _process_features(store, centre_id, topic, page)
+
+        next_href = _next_page_href(page)
+        if not next_href:
+            break
+        if time.monotonic() >= deadline_at:
+            logger.warning(
+                "Global Replay synchronous paging stopped at the deadline: "
+                "centre_id=%s topic=%s messages_seen=%d",
+                centre_id, topic, messages_seen,
+            )
+            break
+        next_url = urljoin(page_url, next_href)
+        log_request(f"GET {next_url}")
+        try:
+            resp = requests.get(
+                next_url, headers=_HEADERS,
+                timeout=max(0.05, deadline_at - time.monotonic()),
+            )
+            body_text = resp.text
+            resp.close()
+            log_response(body_text)
+            page = json.loads(body_text)
+        except (requests.RequestException, ValueError) as exc:
+            logger.warning(
+                "Global Replay synchronous next-page request failed: "
+                "centre_id=%s topic=%s reason=%s",
+                centre_id, topic, exc,
+            )
+            break
+        page_url = next_url
+
+    invalid_number_matched = messages_seen != number_matched
+    if invalid_number_matched:
+        logger.error(
+            "Global Replay synchronous numberMatched mismatch: centre_id=%s "
+            "topic=%s numberMatched=%d messages_seen=%d",
+            centre_id, topic, number_matched, messages_seen,
+        )
+
+    return FetchResult(
+        "http", False, False, ttfb_ms, number_matched,
+        invalid_number_matched=invalid_number_matched,
+    )
+
+
+def _process_features(store: RedisStore, centre_id: str, topic: str, page: object) -> int:
+    """Count, store and log every Feature on a page; return the count."""
+    features = page.get("features") if isinstance(page, dict) else None
+    if not isinstance(features, list):
+        return 0
+    seen = 0
+    for feature in features:
+        seen += 1
+        if not isinstance(feature, dict):
+            continue
+        msg_id = feature.get("id")
+        time_value = feature.get("time")
+        if time_value is None:
+            props = feature.get("properties")
+            if isinstance(props, dict):
+                time_value = props.get("pubtime")
+        if not msg_id or not time_value:
+            logger.warning(
+                "Global Replay synchronous feature missing id/time: "
+                "centre_id=%s topic=%s",
+                centre_id, topic,
+            )
+            continue
+        store.store_sync_message(centre_id, topic, str(msg_id), str(time_value))
+        logger.info(
+            "Replay message (synchronous): centre_id=%s topic=%s id=%s time=%s",
+            centre_id, topic, msg_id, time_value,
+        )
+    return seen
 
 
 def async_fetch(

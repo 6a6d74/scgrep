@@ -2,9 +2,11 @@ import logging
 import threading
 import time
 
+import fakeredis
 import requests
 import responses
 
+from scgrep.redis_store import RedisStore
 from scgrep.replay_registry import ReplayRegistry
 from scgrep.replay_tester import (
     async_fetch,
@@ -23,21 +25,73 @@ CENTRE = "ca-eccc-msc-global-replay"
 # Synchronous (OGC API - Features) fetch
 # --------------------------------------------------------------------------
 
+def _store():
+    client = fakeredis.FakeRedis(decode_responses=True)
+    return RedisStore("redis:6379", 660, [TOPIC], client=client)
+
+
+def _feature(msg_id, pubtime="2026-08-16T09:00:00Z"):
+    return {"type": "Feature", "id": msg_id, "properties": {"pubtime": pubtime}}
+
+
+def _collection(number_matched, features, next_href=None):
+    doc = {
+        "type": "FeatureCollection",
+        "numberMatched": number_matched,
+        "features": features,
+        "links": [],
+    }
+    if next_href:
+        doc["links"].append({"rel": "next", "type": "application/geo+json", "href": next_href})
+    return doc
+
+
 @responses.activate
-def test_sync_fetch_success():
-    responses.add(responses.GET, ITEMS_URL, json={"numberMatched": 42}, status=200)
-    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "2026-03-19T12:20:00Z", "2026-03-19T12:25:00Z", 5.0)
+def test_sync_fetch_counts_stores_and_matches():
+    responses.add(
+        responses.GET, ITEMS_URL,
+        json=_collection(2, [_feature("m1"), _feature("m2")]), status=200,
+    )
+    store = _store()
+    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, store)
     assert result.protocol == "http"
     assert result.aborted is False
     assert result.invalid_format is False
-    assert result.messages_fetched == 42
-    assert result.fetch_delay_ms >= 0
+    assert result.invalid_number_matched is False
+    assert result.messages_fetched == 2  # numberMatched
+    assert store.count_sync_messages(CENTRE, TOPIC, 0, 9_999_999_999) == 2
+
+
+@responses.activate
+def test_sync_fetch_number_matched_mismatch(caplog):
+    # numberMatched says 5 but only one Feature is returned (no next page).
+    responses.add(responses.GET, ITEMS_URL, json=_collection(5, [_feature("m1")]), status=200)
+    with caplog.at_level(logging.ERROR, logger="scgrep.replay_tester"):
+        result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, _store())
+    assert result.messages_fetched == 5  # numberMatched is unchanged
+    assert result.invalid_number_matched is True
+    assert "numberMatched mismatch" in caplog.text
+
+
+@responses.activate
+def test_sync_fetch_pages_through_next_links():
+    next_url = f"{REPLAY_URL}/items-page-2"
+    responses.add(
+        responses.GET, ITEMS_URL,
+        json=_collection(3, [_feature("a"), _feature("b")], next_href=next_url), status=200,
+    )
+    responses.add(responses.GET, next_url, json=_collection(3, [_feature("c")]), status=200)
+    store = _store()
+    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, store)
+    assert result.messages_fetched == 3
+    assert result.invalid_number_matched is False  # 3 features seen == numberMatched
+    assert store.count_sync_messages(CENTRE, TOPIC, 0, 9_999_999_999) == 3
 
 
 @responses.activate
 def test_sync_fetch_missing_number_matched():
     responses.add(responses.GET, ITEMS_URL, json={"features": []}, status=200)
-    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0)
+    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, _store())
     assert result.invalid_format is True
     assert result.messages_fetched == 0
     assert result.aborted is False
@@ -46,7 +100,7 @@ def test_sync_fetch_missing_number_matched():
 @responses.activate
 def test_sync_fetch_non_json():
     responses.add(responses.GET, ITEMS_URL, body="<html>oops</html>", status=200)
-    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0)
+    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, _store())
     assert result.invalid_format is True
     assert result.messages_fetched == 0
 
@@ -54,7 +108,7 @@ def test_sync_fetch_non_json():
 @responses.activate
 def test_sync_fetch_timeout_aborts():
     responses.add(responses.GET, ITEMS_URL, body=requests.exceptions.ReadTimeout())
-    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 2.0)
+    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 2.0, _store())
     assert result.aborted is True
     assert result.invalid_format is True
     assert result.messages_fetched == 0
@@ -62,18 +116,20 @@ def test_sync_fetch_timeout_aborts():
 
 
 @responses.activate
-def test_sync_fetch_emits_request_response_and_number_matched_logs(caplog):
-    long_body = {"numberMatched": 42, "features": ["x" * 200]}
-    responses.add(responses.GET, ITEMS_URL, json=long_body, status=200)
+def test_sync_fetch_emits_request_response_message_and_number_matched_logs(caplog):
+    responses.add(
+        responses.GET, ITEMS_URL,
+        json=_collection(2, [_feature("m1"), _feature("m2")]), status=200,
+    )
     with caplog.at_level(logging.INFO, logger="scgrep.replay_tester"):
-        sync_fetch(REPLAY_URL, CENTRE, TOPIC, "2026-03-19T12:20:00Z",
-                   "2026-03-19T12:25:00Z", 5.0, max_chars=50)
+        sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, _store(), max_chars=40)
     text = caplog.text
     assert "type=synchronous" in text and CENTRE in text and TOPIC in text
-    assert "request=GET" in text and "datetime=2026-03-19T12:20:00Z/2026-03-19T12:25:00Z" in text
+    assert "request=GET" in text and "datetime=s/e" in text
     assert "Global Replay response" in text
-    assert "truncated" in text  # body exceeded max_chars=50
-    assert "numberMatched=42" in text
+    assert "truncated" in text  # body exceeded max_chars=40
+    assert f"Replay message (synchronous): centre_id={CENTRE} topic={TOPIC} id=m1" in text
+    assert "numberMatched=2" in text
 
 
 # --------------------------------------------------------------------------

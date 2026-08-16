@@ -59,6 +59,13 @@ class Metrics:
             ["report_by", "centre_id", "topic", "protocol"],
             registry=self.registry,
         )
+        self.response_invalid_number_matched = Gauge(
+            _METRIC_PREFIX + "response_invalid_numberMatched_flag",
+            "Set to 1 if the number of messages returned by the synchronous "
+            "fetch did not match numberMatched (http only)",
+            ["report_by", "centre_id", "topic", "protocol"],
+            registry=self.registry,
+        )
 
 
 class _QuietRequestHandler(WSGIRequestHandler):

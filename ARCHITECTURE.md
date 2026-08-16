@@ -129,6 +129,11 @@ replay brokers is stored once — this is what **deduplicates** the operational
 multi-broker case for free. `clear_replay` deletes these sets at the start of a
 cycle (a clean sheet), and `count_replay_messages` is the `mqtt` count.
 
+The **synchronous** fetch records its messages the same way in yet another
+keyspace, `scgrep:sync:<centre-id>:<pattern>` (`store_sync_message` /
+`count_sync_messages` / `clear_sync`), kept separate from the baseline and the
+replay records for the same reason.
+
 ### `replay_registry.py` — timing async replays
 
 `ReplayRegistry` is a thread-safe map from an expected replay **channel** to a
@@ -143,9 +148,13 @@ deduplicated *count* comes from Redis (above).
 ### `replay_tester.py` — the two fetch paths
 
 - **`sync_fetch`** — OGC API - Features. Issues `GET .../collections/…/items?
-  datetime=…&topic=…`, measures time-to-first-byte, and reads `numberMatched`
-  from the response. Returns aborted if no response arrives before the deadline,
-  or invalid-format if `numberMatched` is missing.
+  datetime=…&topic=…`, measures time-to-first-byte, reads `numberMatched` (from
+  the first page only), then **pages** through every `rel: next` link. For each
+  returned Feature it counts it, records it in Redis (`store_sync_message`) and
+  logs it. When all pages are in it compares the count of messages actually
+  returned with `numberMatched` and sets `invalid_number_matched` (logging an
+  error) on a mismatch. Returns aborted if no response arrives before the
+  deadline, or invalid-format if `numberMatched` is missing/malformed.
 - **`async_fetch`** — OGC API - Processes. POSTs to
   `.../processes/wis2-grep-subscriber/execution`, validates the returned
   `subscriptions` metadata (each channel must sit within the subscriber's
