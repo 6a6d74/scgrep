@@ -109,6 +109,56 @@ def test_run_cycle_publishes_all_metrics():
     assert _gauge_value(metrics, metrics.response_invalid_format, **mqtt_labels) == 0
 
 
+@responses.activate
+def test_run_cycle_replay_gap_does_not_abort_mqtt():
+    """A genuine replay gap: baseline > 0 but the replay has numberMatched == 0
+    and delivers nothing. The mqtt test must NOT abort (numberMatched gates the
+    wait); it reports 0 fetched and the HTTP response delay, while the baseline
+    vs http/mqtt difference surfaces the gap."""
+    cfg = Config.from_env(dict(ENV))
+    client = fakeredis.FakeRedis(decode_responses=True)
+    store = RedisStore("redis:6379", cfg.redis_expiry, cfg.subscription_topics, client=client)
+    registry = ReplayRegistry()
+    metrics = Metrics()
+
+    now = time.time()
+    in_window = epoch_to_iso(now - 11)
+    store.store_message("a", in_window, TOPIC)
+    store.store_message("b", in_window, TOPIC)  # baseline = 2
+
+    channel = f"replay/a/wis2/{CENTRE}/{cfg.subscriber_id}/{TOPIC}"
+    responses.add(
+        responses.GET, ITEMS_URL,
+        json={"type": "FeatureCollection", "numberMatched": 0, "features": [], "links": []},
+        status=200,
+    )
+    responses.add(
+        responses.POST, EXEC_URL,
+        json={"subscriptions": [{
+            "rel": "items", "type": "application/json",
+            "href": "mqtts://everyone:everyone@globalbroker.meteo.fr:8883",
+            "title": "Meteo France", "channel": channel,
+        }]},
+        status=200,
+    )
+
+    # No replay messages are delivered at all.
+    run_cycle(cfg, store, registry, metrics, now=now)
+
+    report_by = cfg.sensor_centre_id
+    assert _gauge_value(metrics, metrics.messages_received, report_by=report_by, topic=TOPIC) == 2
+
+    mqtt_labels = dict(report_by=report_by, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
+    assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 0
+    # The key assertion: no abort, despite a non-zero baseline and no messages.
+    assert _gauge_value(metrics, metrics.test_aborted, **mqtt_labels) == 0
+    # HTTP response delay, not the 95% abort value (0.95 * 2s = 1900 ms).
+    assert _gauge_value(metrics, metrics.fetch_delay, **mqtt_labels) < 1900
+
+    http_labels = dict(report_by=report_by, centre_id=CENTRE, topic=TOPIC, protocol="http")
+    assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 0
+
+
 def test_all_metrics_published_together_after_fetches(monkeypatch):
     """Baseline and http metrics are held until the (slow) async fetch finishes,
     so every metric for the cycle updates at the same time."""
@@ -166,11 +216,20 @@ def test_publication_held_until_95pct_even_when_fetches_finish_early(monkeypatch
     registry = ReplayRegistry()
     metrics = Metrics()
 
+    now = time.time()  # window is (now-11 .. now-10) for TIME_LAG=10, TEST_INTERVAL=1
     monkeypatch.setattr(tc, "sync_fetch", lambda *a, **k: FetchResult("http", False, False, 1.0, 5))
-    monkeypatch.setattr(tc, "async_fetch", lambda *a, **k: FetchResult("mqtt", False, False, 2.0, 7))
+
+    def fake_async(*a, **k):
+        # The mqtt count is always recomputed from Redis (deduplicated), so store
+        # the replay messages there rather than relying on the FetchResult count.
+        store.store_replay_message(CENTRE, "r1", epoch_to_iso(now - 10.5), TOPIC)
+        store.store_replay_message(CENTRE, "r2", epoch_to_iso(now - 10.5), TOPIC)
+        return FetchResult("mqtt", False, False, 2.0, 0)
+
+    monkeypatch.setattr(tc, "async_fetch", fake_async)
 
     t0 = time.monotonic()
-    run_cycle(cfg, store, registry, metrics, now=time.time())
+    run_cycle(cfg, store, registry, metrics, now=now)
     elapsed = time.monotonic() - t0
 
     # Held until ~95% of the 1s test period despite instant fetches.
@@ -178,4 +237,4 @@ def test_publication_held_until_95pct_even_when_fetches_finish_early(monkeypatch
     http_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="http")
     mqtt_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
     assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 5
-    assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 7
+    assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 2

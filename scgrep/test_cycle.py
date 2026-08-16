@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 
 from .config import Config
@@ -76,15 +77,20 @@ def run_cycle(
         futures = {}
         for topic in config.subscription_topics:
             for centre_id, replay_url in config.replay_targets:
-                futures[ex.submit(
+                sync_future = ex.submit(
                     sync_fetch, replay_url, centre_id, topic, start_iso, end_iso,
                     deadline_s, store, config.log_http_response_max_chars,
                     deadline_at,
-                )] = (centre_id, topic)
+                )
+                futures[sync_future] = (centre_id, topic)
+                # The async fetch expects replay messages only when the replay's
+                # own numberMatched (from the synchronous fetch above) is > 0.
                 futures[ex.submit(
                     async_fetch, replay_url, centre_id, topic, config.subscriber_id,
                     broker_authorities, start_iso, end_iso, deadline_s, registry,
-                    baselines[topic], max_chars=config.log_http_response_max_chars,
+                    baselines[topic],
+                    number_matched_provider=_number_matched_from(sync_future),
+                    max_chars=config.log_http_response_max_chars,
                     deadline_at=deadline_at,
                 )] = (centre_id, topic)
         for future, (centre_id, topic) in futures.items():
@@ -96,7 +102,9 @@ def run_cycle(
             # The async (mqtt) count comes from Redis: deduplicated across replay
             # brokers, counted the same way as the baseline. The registry is used
             # only for timing/abort, so its (non-deduplicated) count is replaced.
-            if result.protocol == "mqtt" and not result.aborted and baselines[topic] > 0:
+            # (Redis holds 0 for a window where no messages were expected, so this
+            # is safe regardless of the numberMatched/baseline decision.)
+            if result.protocol == "mqtt" and not result.aborted:
                 deduped = store.count_replay_messages(
                     centre_id, topic, start_epoch, end_epoch
                 )
@@ -126,6 +134,27 @@ def run_cycle(
         )
 
     logger.info("Test period complete: window %s .. %s", start_iso, end_iso)
+
+
+def _number_matched_from(sync_future: "Future[FetchResult]") -> Callable[[], int | None]:
+    """Build a provider that yields the synchronous fetch's ``numberMatched``.
+
+    Calling the returned function blocks on ``sync_future`` (the parallel
+    synchronous fetch) and returns its ``numberMatched``, or ``None`` when it is
+    unavailable — the fetch aborted, raised, or returned an invalid format — so
+    the async fetch can fall back to the baseline. A ``numberMatched`` value is
+    used even when it failed the count validation (``invalid_number_matched``):
+    the service's own claim is still the right basis for "are messages expected?".
+    """
+    def provider() -> int | None:
+        try:
+            result = sync_future.result()
+        except Exception:  # noqa: BLE001 - unavailable numberMatched -> fall back
+            return None
+        if result.protocol != "http" or result.aborted or result.invalid_format:
+            return None
+        return result.messages_fetched
+    return provider
 
 
 def _publish(

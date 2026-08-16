@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urljoin
 
@@ -257,6 +258,7 @@ def async_fetch(
     deadline_s: float,
     registry: ReplayRegistry,
     baseline: int,
+    number_matched_provider: Callable[[], int | None] | None = None,
     max_chars: int = 1000,
     poll_interval: float = 0.05,
     deadline_at: float | None = None,
@@ -268,11 +270,19 @@ def async_fetch(
     counter is observed until the deadline; the first-arrival time yields the
     fetch delay and the final count yields ``messages_fetched``.
 
-    ``baseline`` is the number of messages the Sensor Centre received for this
-    topic/window. When it is **zero**, no replay messages are expected, so waiting
-    for MQTT would always time out; instead the fetch reports the time to the
-    first byte of its HTTP (process-execution) response as ``fetch_delay`` and
-    does not abort. When it is non-zero, the wait-for-first-message logic applies.
+    Whether replay messages are *expected* is decided from the replay service's
+    own ``numberMatched`` for this topic/window, obtained via
+    ``number_matched_provider`` (typically the result of the parallel synchronous
+    fetch). When ``numberMatched`` is unavailable (the synchronous fetch failed),
+    the Sensor Centre's ``baseline`` count is used as a fallback.
+
+    When **no messages are expected** (``numberMatched == 0``, or a zero baseline
+    fallback), waiting for MQTT would always time out; instead the fetch reports
+    the time to the first byte of its HTTP (process-execution) response as
+    ``fetch_delay`` and does **not** abort. When messages are expected, the
+    wait-for-first-message logic applies and the test aborts if none arrive — so
+    ``test_aborted_flag`` means specifically "the replay had messages but did not
+    deliver them over MQTT within the deadline", not "the replay had a data gap".
 
     ``deadline_s`` is 95% of ``TEST_INTERVAL`` (aborted fetch-delay value);
     ``deadline_at`` is an absolute ``time.monotonic()`` stop instant, defaulting
@@ -342,14 +352,25 @@ def async_fetch(
         if http_response_at is None:
             http_response_at = time.monotonic()
 
-    # Zero baseline: no replay messages are expected, so waiting for MQTT would
-    # always abort. Report the HTTP response delay instead and do not abort.
-    if baseline == 0:
+    # Decide whether replay messages are expected. Prefer the replay's own
+    # numberMatched (from the synchronous fetch); fall back to the baseline when
+    # it is unavailable (e.g. the synchronous fetch failed).
+    number_matched = number_matched_provider() if number_matched_provider else None
+    if number_matched is not None:
+        expect_messages = number_matched > 0
+    else:
+        expect_messages = baseline > 0
+
+    # No messages expected: waiting for MQTT would always abort. Report the HTTP
+    # (process-execution) response delay instead, and do not abort — a genuine
+    # replay gap (numberMatched == 0) is surfaced by the baseline-vs-fetched
+    # difference, not by an mqtt abort.
+    if not expect_messages:
         registry.unregister(expected_channel)
         fetch_delay_ms = (http_response_at - start) * 1000
         return FetchResult("mqtt", False, invalid_format, fetch_delay_ms, 0)
 
-    # Non-zero baseline: wait for the first replay message or the deadline.
+    # Messages are expected: wait for the first replay message or the deadline.
     while time.monotonic() < deadline:
         _, first = counter.snapshot()
         if first is not None:

@@ -159,13 +159,18 @@ deduplicated *count* comes from Redis (above).
   `.../processes/wis2-grep-subscriber/execution`, validates the returned
   `subscriptions` metadata (each channel must sit within the subscriber's
   namespace and every configured broker must appear), then uses the
-  `ReplayRegistry` for **timing**:
-  - if the **baseline is non-zero**, it waits for the first replayed message
-    (fetch delay) and keeps observing until the deadline; if none arrive it
-    aborts;
-  - if the **baseline is zero**, no replays are expected, so it does not wait —
-    it reports the time-to-first-byte of the HTTP process-execution response as
-    the fetch delay and does not abort.
+  `ReplayRegistry` for **timing**. Whether replays are *expected* is decided from
+  the replay service's own `numberMatched` (obtained from the parallel
+  synchronous fetch), falling back to the Sensor Centre's baseline when that is
+  unavailable:
+  - if **messages are expected** (`numberMatched > 0`), it waits for the first
+    replayed message (fetch delay) and keeps observing until the deadline; if none
+    arrive it aborts — so `test_aborted_flag` means "the replay had messages but
+    did not deliver them over MQTT in time", not "the replay had a data gap";
+  - if **no messages are expected** (`numberMatched == 0`), it does not wait — it
+    reports the time-to-first-byte of the HTTP process-execution response as the
+    fetch delay and does not abort. A genuine `numberMatched == 0` gap is surfaced
+    by the baseline-vs-fetched difference, not by an abort.
 
   The `mqtt` **count** itself is not taken from here — `run_cycle` reads it from
   Redis (deduplicated) after the fetch completes.
@@ -183,11 +188,14 @@ count); nothing about Prometheus lives here, which keeps the logic testable.
    is triggered.
 3. Fan out a synchronous **and** an asynchronous fetch for every
    (topic × Global Replay service) pair on a thread pool, so the slow parts run
-   in parallel and the cycle fits inside one `TEST_INTERVAL`.
+   in parallel and the cycle fits inside one `TEST_INTERVAL`. Each async fetch is
+   given a provider that yields its pair's synchronous `numberMatched` (blocking
+   on that future), which gates whether it expects replays.
 4. All fetches share one **absolute deadline** anchored to the start of the cycle
    (95% of `TEST_INTERVAL`), so they stop together.
 5. For each async result, replace its count with the **deduplicated Redis count**
-   (`count_replay_messages`) for the window, when the fetch was not aborted.
+   (`count_replay_messages`) for the window, when the fetch was not aborted (Redis
+   holds zero for a window where no messages were expected, so this is safe).
 6. **Publish every metric at once** at that 95% instant — baseline, `http`, and
    `mqtt` — so a single Prometheus scrape always sees a consistent set for the
    cycle rather than a mix of old and new values.

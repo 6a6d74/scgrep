@@ -48,8 +48,8 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 | --- | --- | --- |
 | `wmo_wis2_scgrep_messages_received_during_interval_total` | `report_by`, `topic` | Messages received from Global Brokers on the topic during the test period (baseline). |
 | `wmo_wis2_scgrep_messages_fetched_during_interval_total` | `report_by`, `centre_id`, `topic`, `protocol` | Messages retrieved from the Global Replay service — `numberMatched` for `http`; for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). |
-| `wmo_wis2_scgrep_test_aborted_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if retrieval exceeded the test period. |
-| `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Milliseconds to first byte / first message. |
+| `wmo_wis2_scgrep_test_aborted_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if retrieval did not complete within the test period. For `mqtt` this means the replay reported messages (`numberMatched > 0`) but delivered none over MQTT before the deadline; a `numberMatched = 0` window does **not** abort. |
+| `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Timeliness in milliseconds: `http` = time to first byte; `mqtt` = time to the first replayed message, or — when no messages are expected (`numberMatched = 0`) — the time to the process-execution HTTP response. |
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
 | `wmo_wis2_scgrep_response_invalid_numberMatched_flag` | `report_by`, `centre_id`, `topic`, `protocol` | **Synchronous (`http`) fetch only:** `1` if the number of messages actually returned (across all pages) did not equal `numberMatched`. |
 
@@ -92,11 +92,15 @@ the tool is to watch **how large** the difference is.
 - **`http` above the baseline** — the replay store holds messages this subscriber
   did not receive (e.g. it missed them, or the store includes messages from
   brokers the subscriber is not connected to).
-- **`mqtt` at zero with `test_aborted_flag` set** — no replayed messages arrived
-  on the broker SCGRep subscribes to within the deadline. This can be a genuine
-  timeliness failure, or a configuration/coverage issue — e.g. during the
-  preoperational phase the replay service may publish replays to its own broker
-  rather than the operational Global Brokers (see `GLOBAL_REPLAY_BROKER_URLS`).
+- **`mqtt` at zero with `test_aborted_flag` set** — the replay reported messages
+  for the window (`numberMatched > 0`) but delivered none over the broker SCGRep
+  subscribes to within the deadline. This is a genuine async-delivery/timeliness
+  failure, or a configuration/coverage issue — e.g. during the preoperational
+  phase the replay service may publish replays to its own broker rather than the
+  operational Global Brokers (see `GLOBAL_REPLAY_BROKER_URLS`). When the replay
+  genuinely has nothing for the window (`numberMatched = 0`), `mqtt` is zero but
+  the test does **not** abort — that gap surfaces as a baseline-vs-fetched
+  difference instead.
 - **`response_invalid_format_flag` set** — the response was malformed, so its
   count is unreliable regardless of the number.
 
@@ -171,15 +175,18 @@ several faults:
   `messages_fetched{mqtt}` **= 0** (large `Differences` for both protocols);
 - `response_invalid_format_flag{http} = 0` — the `http` fetch got a clean
   `numberMatched=0` response (nothing malformed);
-- `test_aborted_flag{mqtt} = 1` — because the baseline was non-zero the async
-  fetch waited for replay messages that never came and hit the deadline.
+- `test_aborted_flag{mqtt} = 0` — the async fetch decides whether replays are due
+  from the replay's **own** `numberMatched` (from the synchronous fetch), not
+  from the baseline. A `numberMatched=0` gap means *nothing is due over MQTT*, so
+  the async fetch does **not** abort; `fetch_delay_time{mqtt}` reports the HTTP
+  (process-execution) response delay instead of the abort value.
 
-That `mqtt` abort is *expected* for a real gap: the async fetch treats a
-non-zero **baseline** as "messages are due", so when the replay delivers none it
-aborts. It does not by itself mean the async *delivery* path is broken — the
-`http` `numberMatched=0` already shows the replay simply had nothing for that
-window. (An `mqtt` abort with `numberMatched > 0` would be the opposite case: the
-replay claimed messages but failed to deliver them over MQTT in time.)
+`test_aborted_flag{mqtt} = 1` is reserved for the **opposite** case: the replay
+reported `numberMatched > 0` but failed to deliver those messages over MQTT
+within the deadline — a genuine async-delivery problem, distinct from a data gap
+(which the baseline-vs-fetched `Differences` already surface). If `numberMatched`
+is unavailable (the synchronous fetch itself failed), the async fetch falls back
+to the baseline for this decision.
 
 ## Configuration
 
@@ -386,7 +393,7 @@ crosshair, so a hover lines up across all of them:
 | 2 | **Differences** | `baseline − http`, `baseline − mqtt` | near zero = healthy; drifting away = the service is losing/gaining messages |
 | 3 | **Differences (%)** | panel 2 as a percentage of the baseline | 0% = perfect match; positive % = the service returned fewer than the baseline (undefined when the baseline is zero) |
 | 4 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
-| 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = the fetch exceeded the test period |
+| 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = retrieval did not complete in time (`mqtt`: `numberMatched > 0` but nothing delivered over MQTT) |
 | 6 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
 | 7 | **Synchronous fetch validation** | `http` invalid-numberMatched flag (0/1) | 1 = the synchronous fetch returned a different message count than `numberMatched` |
 

@@ -318,3 +318,88 @@ def test_async_fetch_zero_baseline_still_validates_metadata():
     assert result.messages_fetched == 0
     assert result.invalid_format is True  # channel outside the subscriber namespace
     assert result.fetch_delay_ms >= 0
+
+
+@responses.activate
+def test_async_fetch_number_matched_zero_does_not_abort():
+    # numberMatched == 0 (a genuine replay gap) even though the baseline is
+    # non-zero: no replay messages are expected, so the fetch must NOT abort — it
+    # reports the HTTP response delay and returns promptly.
+    centre_id = "ca-eccc-msc-global-replay"
+    subscriber_id = "uuid-1234"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
+    responses.add(
+        responses.POST, EXEC_URL,
+        json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
+        status=200,
+    )
+    registry = ReplayRegistry()
+    t0 = time.monotonic()
+    result = async_fetch(
+        REPLAY_URL, centre_id, TOPIC, subscriber_id,
+        ["globalbroker.meteo.fr:8883"],
+        "s", "e", deadline_s=5.0, registry=registry, baseline=204,
+        number_matched_provider=lambda: 0, poll_interval=0.02,
+    )
+    elapsed = time.monotonic() - t0
+    assert result.aborted is False
+    assert result.messages_fetched == 0
+    assert result.invalid_format is False
+    assert 0 <= result.fetch_delay_ms < 5.0 * 1000  # HTTP delay, not the abort value
+    assert elapsed < 1.0  # did not wait for the deadline
+
+
+@responses.activate
+def test_async_fetch_number_matched_positive_overrides_zero_baseline():
+    # numberMatched > 0 even though the baseline is zero: messages ARE expected,
+    # so the fetch waits for them and counts (does not short-circuit).
+    centre_id = "ca-eccc-msc-global-replay"
+    subscriber_id = "uuid-1234"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
+    channel = f"replay/a/wis2/{centre_id}/{subscriber_id}/{TOPIC}"
+    responses.add(
+        responses.POST, EXEC_URL,
+        json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
+        status=200,
+    )
+    registry = ReplayRegistry()
+
+    def deliver():
+        time.sleep(0.05)
+        registry.handle_replay(channel)
+
+    threading.Thread(target=deliver, daemon=True).start()
+
+    result = async_fetch(
+        REPLAY_URL, centre_id, TOPIC, subscriber_id,
+        ["globalbroker.meteo.fr:8883"],
+        "s", "e", deadline_s=0.4, registry=registry, baseline=0,
+        number_matched_provider=lambda: 3, poll_interval=0.02,
+    )
+    assert result.aborted is False
+    assert result.messages_fetched == 1
+    assert result.fetch_delay_ms > 0
+
+
+@responses.activate
+def test_async_fetch_number_matched_unavailable_falls_back_to_baseline():
+    # numberMatched unavailable (provider returns None, e.g. the synchronous
+    # fetch failed): fall back to the baseline. Non-zero baseline + no messages
+    # -> abort.
+    centre_id = "ca-eccc-msc-global-replay"
+    subscriber_id = "uuid-1234"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
+    responses.add(
+        responses.POST, EXEC_URL,
+        json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
+        status=200,
+    )
+    registry = ReplayRegistry()
+    result = async_fetch(
+        REPLAY_URL, centre_id, TOPIC, subscriber_id,
+        ["globalbroker.meteo.fr:8883"],
+        "s", "e", deadline_s=0.2, registry=registry, baseline=5,
+        number_matched_provider=lambda: None, poll_interval=0.02,
+    )
+    assert result.aborted is True
+    assert result.messages_fetched == 0
