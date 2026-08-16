@@ -57,6 +57,11 @@ def run_cycle(
         topic: store.count_messages(topic, start_epoch, end_epoch)
         for topic in config.subscription_topics
     }
+    for topic, count in baselines.items():
+        logger.info(
+            "Baseline: topic=%s messages=%d interval=%s/%s",
+            topic, count, start_iso, end_iso,
+        )
 
     # Clean sheet for this cycle, before any request is made: replay message
     # records (for the deduplicated mqtt count) and synchronous message records.
