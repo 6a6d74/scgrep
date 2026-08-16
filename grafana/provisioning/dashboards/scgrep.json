@@ -3,7 +3,7 @@
   "title": "SCGRep - Global Replay performance",
   "tags": ["scgrep", "wis2"],
   "schemaVersion": 39,
-  "version": 5,
+  "version": 6,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -17,8 +17,8 @@
         "name": "centre_id",
         "label": "Global Replay service",
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(wmo_wis2_scgrep_messages_fetched_during_interval_total, centre_id)",
-        "query": "label_values(wmo_wis2_scgrep_messages_fetched_during_interval_total, centre_id)",
+        "definition": "label_values(wmo_wis2_scgrep_messages_fetched_total, centre_id)",
+        "query": "label_values(wmo_wis2_scgrep_messages_fetched_total, centre_id)",
         "refresh": 2,
         "sort": 1,
         "multi": false,
@@ -30,8 +30,8 @@
         "name": "topic",
         "label": "Topic(s)",
         "datasource": { "type": "prometheus", "uid": "prometheus" },
-        "definition": "label_values(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\"}, topic)",
-        "query": "label_values(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\"}, topic)",
+        "definition": "label_values(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\"}, topic)",
+        "query": "label_values(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\"}, topic)",
         "refresh": 2,
         "sort": 1,
         "multi": true,
@@ -61,9 +61,9 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
-        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_during_interval_total{topic=~\"$topic\"}[60s])", "legendFormat": "received - {{topic}}" },
-        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[60s])", "legendFormat": "http - {{topic}}" },
-        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[60s])", "legendFormat": "mqtt - {{topic}}" }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[60s])", "legendFormat": "received - {{topic}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[60s])", "legendFormat": "http - {{topic}}" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[60s])", "legendFormat": "mqtt - {{topic}}" }
       ]
     },
     {
@@ -84,8 +84,8 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
-        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_during_interval_total{topic=~\"$topic\"}[60s]) - on(report_by, topic) group_right() increase(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[60s])", "legendFormat": "received - http - {{topic}}" },
-        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_during_interval_total{topic=~\"$topic\"}[60s]) - on(report_by, topic) group_right() increase(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[60s])", "legendFormat": "received - mqtt - {{topic}}" }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[60s]) - on(report_by, topic) group_right() increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[60s])", "legendFormat": "received - http - {{topic}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[60s]) - on(report_by, topic) group_right() increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[60s])", "legendFormat": "received - mqtt - {{topic}}" }
       ]
     },
     {
@@ -108,8 +108,8 @@
         "tooltip": { "mode": "multi", "sort": "desc" }
       },
       "targets": [
-        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - increase(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[60s]) / on(report_by, topic) group_left() increase(wmo_wis2_scgrep_messages_received_during_interval_total{topic=~\"$topic\"}[60s]))", "legendFormat": "received - http (%) - {{topic}}" },
-        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - increase(wmo_wis2_scgrep_messages_fetched_during_interval_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[60s]) / on(report_by, topic) group_left() increase(wmo_wis2_scgrep_messages_received_during_interval_total{topic=~\"$topic\"}[60s]))", "legendFormat": "received - mqtt (%) - {{topic}}" }
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[60s]) / on(report_by, topic) group_left() increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[60s]))", "legendFormat": "received - http (%) - {{topic}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "100 * (1 - increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[60s]) / on(report_by, topic) group_left() increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[60s]))", "legendFormat": "received - mqtt (%) - {{topic}}" }
       ]
     },
     {

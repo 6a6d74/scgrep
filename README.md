@@ -46,8 +46,8 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 
 | Metric | Labels | Description |
 | --- | --- | --- |
-| `wmo_wis2_scgrep_messages_received_during_interval_total` | `report_by`, `topic` | **Cumulative counter**, incremented each test period by the messages received from Global Brokers on the topic (the baseline). Use `increase(...[60s])` for a per-interval value. |
-| `wmo_wis2_scgrep_messages_fetched_during_interval_total` | `report_by`, `centre_id`, `topic`, `protocol` | **Cumulative counter**, incremented each test period by the messages retrieved from the Global Replay service — `numberMatched` for `http`; for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). Use `increase(...[60s])` for a per-interval value. |
+| `wmo_wis2_scgrep_messages_received_total` | `report_by`, `topic` | **Cumulative counter**, incremented each test period by the messages received from Global Brokers on the topic (the baseline). Use `increase(...[60s])` for a per-interval value. |
+| `wmo_wis2_scgrep_messages_fetched_total` | `report_by`, `centre_id`, `topic`, `protocol` | **Cumulative counter**, incremented each test period by the messages retrieved from the Global Replay service — `numberMatched` for `http`; for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). Use `increase(...[60s])` for a per-interval value. |
 | `wmo_wis2_scgrep_test_aborted_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if retrieval did not complete within the test period. For `mqtt` this means the replay reported messages (`numberMatched > 0`) but delivered none over MQTT before the deadline; a `numberMatched = 0` window does **not** abort. |
 | `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Timeliness in milliseconds: `http` = time to first byte; `mqtt` = time to the first replayed message, or — when no messages are expected (`numberMatched = 0`) — the time to the process-execution HTTP response. |
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
@@ -55,7 +55,7 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 
 `protocol` is `http` (synchronous) or `mqtt` (asynchronous).
 
-The two `messages_*_during_interval_total` metrics are **cumulative counters**:
+The two `messages_*_total` metrics are **cumulative counters**:
 they are *incremented* by each test period's count and never reset, so they only
 grow (until the process restarts). This leaves how they are aggregated up to the
 query — take `increase(...[60s])` to recover the per-interval count, or sum/rate
@@ -525,8 +525,8 @@ Go to the **Graph** page (the expression browser):
      time-to-first-byte.
    - `wmo_wis2_scgrep_test_aborted_flag == 1` — only the (topic, service,
      protocol) combinations whose fetch timed out.
-   - `wmo_wis2_scgrep_messages_fetched_during_interval_total` vs
-     `wmo_wis2_scgrep_messages_received_during_interval_total` — replayed count
+   - `wmo_wis2_scgrep_messages_fetched_total` vs
+     `wmo_wis2_scgrep_messages_received_total` — replayed count
      versus the broker baseline for a topic.
 
 These are **gauges** reporting the value for the most recent test cycle, so on
@@ -535,9 +535,9 @@ the Graph tab you see one point per cycle. A few useful expressions:
 ```promql
 # Replayed count minus the broker baseline per topic/service (negative means the
 # replay service returned fewer messages than were seen on the brokers).
-wmo_wis2_scgrep_messages_fetched_during_interval_total{protocol="http"}
+wmo_wis2_scgrep_messages_fetched_total{protocol="http"}
   - on(report_by, topic) group_left
-    wmo_wis2_scgrep_messages_received_during_interval_total
+    wmo_wis2_scgrep_messages_received_total
 
 # Max async fetch delay across all topics for each Global Replay service.
 max by (centre_id) (wmo_wis2_scgrep_fetch_delay_time{protocol="mqtt"})

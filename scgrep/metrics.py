@@ -37,17 +37,18 @@ class Metrics:
         # Cumulative counters (never reset per cycle): each test period increments
         # them by that period's count, so they grow monotonically. The name is
         # given without the ``_total`` suffix because prometheus_client appends it
-        # for counters, yielding ``..._during_interval_total`` in the exposition.
-        # Use increase(...[60s]) in queries to recover a per-interval value.
+        # for counters, yielding e.g. ``..._messages_received_total`` in the
+        # exposition. Use increase(...[60s]) in queries to recover a per-interval
+        # value.
         self.messages_received = Counter(
-            _METRIC_PREFIX + "messages_received_during_interval",
+            _METRIC_PREFIX + "messages_received",
             "Cumulative messages received from Global Brokers on the topic; "
             "incremented by each test period's count",
             ["report_by", "topic"],
             registry=self.registry,
         )
         self.messages_fetched = Counter(
-            _METRIC_PREFIX + "messages_fetched_during_interval",
+            _METRIC_PREFIX + "messages_fetched",
             "Cumulative messages retrieved from the Global Replay service on the "
             "topic; incremented by each test period's count",
             ["report_by", "centre_id", "topic", "protocol"],

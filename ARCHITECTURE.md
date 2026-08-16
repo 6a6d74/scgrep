@@ -207,7 +207,7 @@ count); nothing about Prometheus lives here, which keeps the logic testable.
 
 Defines the metrics (see the [README](README.md#metrics)) in a dedicated registry
 and serves them over a tiny WSGI HTTP server at `METRICS_ENDPOINT` on
-`METRICS_PORT`, in a daemon thread. The two `messages_*_during_interval_total`
+`METRICS_PORT`, in a daemon thread. The two `messages_*_total`
 metrics are cumulative `Counter`s (named without the `_total` suffix, which
 prometheus_client appends); the rest are `Gauge`s. Prometheus scrapes every 15s
 so a 60s `increase()` window spans several samples.
