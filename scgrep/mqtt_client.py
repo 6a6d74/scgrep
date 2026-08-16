@@ -45,7 +45,12 @@ class MessageHandler:
             logger.debug("Ignoring message on %s: not JSON / missing id/time", topic)
             return
         msg_id, time_value = parsed
-        self._store.store_message(msg_id, time_value, topic)
+        # Log only unique messages (store_message returns False for duplicates).
+        if self._store.store_message(msg_id, time_value, topic):
+            logger.info(
+                "Global Broker message: topic=%s id=%s time=%s",
+                topic, msg_id, time_value,
+            )
 
     def _handle_replay(self, topic: str, payload) -> None:
         # First-arrival timing / abort detection (every arrival, any broker).
@@ -62,7 +67,14 @@ class MessageHandler:
         if parsed is None:
             return
         msg_id, time_value = parsed
-        self._store.store_replay_message(centre_id, msg_id, time_value, original_topic)
+        # Log only unique replay messages (False for duplicates from other brokers).
+        if self._store.store_replay_message(
+            centre_id, msg_id, time_value, original_topic
+        ):
+            logger.info(
+                "Replay message: centre_id=%s topic=%s id=%s time=%s",
+                centre_id, original_topic, msg_id, time_value,
+            )
 
     @staticmethod
     def _parse_message(payload) -> tuple[str, str] | None:
@@ -140,7 +152,8 @@ class MqttManager:
             # Subscribe (again) on every (re)connect so state survives drops.
             client.subscribe([(topic, 1) for topic in subscriptions])
             logger.info(
-                "Subscribed to %d topics on %s", len(subscriptions), broker.host
+                "Subscribed on %s to %d topic(s): %s",
+                broker.host, len(subscriptions), ", ".join(subscriptions),
             )
 
         return on_connect

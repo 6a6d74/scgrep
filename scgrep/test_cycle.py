@@ -50,7 +50,7 @@ def run_cycle(
     report_by = config.sensor_centre_id
     broker_authorities = [broker_authority(b.url) for b in config.brokers]
 
-    logger.info("Running test cycle for window %s .. %s", start_iso, end_iso)
+    logger.info("Test period begins: window %s .. %s", start_iso, end_iso)
 
     # Baselines: fast Redis reads, held for publication at the deadline.
     baselines = {
@@ -72,13 +72,14 @@ def run_cycle(
         for topic in config.subscription_topics:
             for centre_id, replay_url in config.replay_targets:
                 futures[ex.submit(
-                    sync_fetch, replay_url, topic, start_iso, end_iso,
-                    deadline_s, deadline_at,
+                    sync_fetch, replay_url, centre_id, topic, start_iso, end_iso,
+                    deadline_s, config.log_http_response_max_chars, deadline_at,
                 )] = (centre_id, topic)
                 futures[ex.submit(
                     async_fetch, replay_url, centre_id, topic, config.subscriber_id,
                     broker_authorities, start_iso, end_iso, deadline_s, registry,
-                    baselines[topic], deadline_at=deadline_at,
+                    baselines[topic], max_chars=config.log_http_response_max_chars,
+                    deadline_at=deadline_at,
                 )] = (centre_id, topic)
         for future, (centre_id, topic) in futures.items():
             try:
@@ -108,8 +109,16 @@ def run_cycle(
         metrics.messages_received.labels(report_by=report_by, topic=topic).set(count)
     for centre_id, topic, result in fetch_results:
         _publish(metrics, report_by, centre_id, topic, result)
+        # Concise per-result summary for quick scanning of a cycle's outcome.
+        logger.info(
+            "Result: centre_id=%s topic=%s protocol=%s baseline=%d fetched=%d "
+            "delay_ms=%.0f aborted=%d invalid_format=%d",
+            centre_id, topic, result.protocol, baselines.get(topic, 0),
+            result.messages_fetched, result.fetch_delay_ms,
+            int(result.aborted), int(result.invalid_format),
+        )
 
-    logger.info("Test cycle complete")
+    logger.info("Test period complete: window %s .. %s", start_iso, end_iso)
 
 
 def _publish(

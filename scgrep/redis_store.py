@@ -111,12 +111,16 @@ class RedisStore:
     def store_replay_message(
         self, centre_id: str, msg_id: str, time_value: str, original_topic: str
     ) -> bool:
-        """Index one replayed message for centre ``centre_id``; True if indexed."""
+        """Index one replayed message for centre ``centre_id``.
+
+        Returns True only when the message is **newly** stored (a first arrival);
+        a duplicate delivered by another replay broker returns False.
+        """
         try:
             epoch = parse_time_to_epoch(time_value)
         except (ValueError, TypeError):
             return False
-        stored = False
+        newly_added = False
         for pattern in self._topics:
             if topic_matches(pattern, original_topic):
                 key = self._replay_key(centre_id, pattern)
@@ -124,9 +128,10 @@ class RedisStore:
                 pipe.zadd(key, {msg_id: epoch})
                 # Safety-net TTL in case a cycle ends without clearing.
                 pipe.expire(key, self._expiry)
-                pipe.execute()
-                stored = True
-        return stored
+                added, _ = pipe.execute()
+                if added:
+                    newly_added = True
+        return newly_added
 
     def count_replay_messages(
         self, centre_id: str, pattern: str, start_epoch: float, end_epoch: float

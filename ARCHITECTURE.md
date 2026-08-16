@@ -195,7 +195,10 @@ Loads `Config`, starts the metrics server, waits for Redis to become reachable
 The scheduler waits one full `TEST_INTERVAL` before the first cycle, then runs
 cycles back-to-back **without overlap** (each cycle completes at ~95% of the
 interval, then the loop sleeps the remainder). `SIGTERM`/`SIGINT` stop the loop
-and disconnect cleanly.
+and disconnect cleanly. It also configures logging (`LOG_LEVEL`, default `INFO`)
+with a timestamped format; the detailed activity logs (connections, messages,
+requests/responses, per-result summaries) are at `INFO` — see the
+[README](README.md#logging).
 
 ### `util.py` — shared helpers
 

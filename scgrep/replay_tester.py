@@ -7,6 +7,7 @@ Prometheus wiring out of the fetch code and makes the logic unit-testable.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -19,6 +20,13 @@ from .util import broker_authority
 logger = logging.getLogger(__name__)
 
 _HEADERS = {"accept": "application/json", "Content-Type": "application/json"}
+
+
+def _truncate(text: str, max_chars: int) -> str:
+    """Truncate ``text`` for logging, noting the original length when clipped."""
+    if len(text) <= max_chars:
+        return text
+    return f"{text[:max_chars]}... [truncated, {len(text)} chars total]"
 
 
 @dataclass
@@ -34,10 +42,12 @@ class FetchResult:
 
 def sync_fetch(
     replay_url: str,
+    centre_id: str,
     topic: str,
     start_iso: str,
     end_iso: str,
     deadline_s: float,
+    max_chars: int = 1000,
     deadline_at: float | None = None,
 ) -> FetchResult:
     """Synchronous fetch via OGC API - Features.
@@ -46,10 +56,19 @@ def sync_fetch(
     value. ``deadline_at`` is an absolute ``time.monotonic()`` instant at which
     to stop; when omitted it defaults to ``now + deadline_s``. Passing a shared
     ``deadline_at`` lets every fetch in a cycle stop at the same moment.
+    ``max_chars`` caps how much of the HTTP response body is logged.
     """
     url = f"{replay_url}/collections/wis2-notification-messages/items"
     params = {"datetime": f"{start_iso}/{end_iso}", "topic": topic}
     aborted_delay_ms = deadline_s * 1000
+    interval = f"{start_iso}/{end_iso}"
+
+    logger.info(
+        "Global Replay request: centre_id=%s type=synchronous topic=%s interval=%s "
+        "request=%s",
+        centre_id, topic, interval,
+        f"GET {url}?datetime={interval}&topic={topic}",
+    )
 
     start = time.monotonic()
     if deadline_at is None:
@@ -62,27 +81,55 @@ def sync_fetch(
             url, params=params, headers=_HEADERS, stream=True, timeout=timeout
         )
     except requests.RequestException as exc:
-        logger.warning("http sync fetch aborted for %s (%s): %s", url, topic, exc)
+        logger.warning(
+            "Global Replay synchronous test aborted: centre_id=%s topic=%s reason=%s",
+            centre_id, topic, exc,
+        )
         return FetchResult("http", True, True, aborted_delay_ms, 0)
 
     ttfb_ms = (time.monotonic() - start) * 1000
 
     try:
-        body = resp.json()
-    except ValueError:
-        return FetchResult("http", False, True, ttfb_ms, 0)
+        body_text = resp.text
     finally:
         resp.close()
+    logger.info(
+        "Global Replay response: centre_id=%s type=synchronous topic=%s response=%s",
+        centre_id, topic, _truncate(body_text, max_chars),
+    )
+
+    try:
+        body = json.loads(body_text)
+    except ValueError:
+        logger.warning(
+            "Global Replay synchronous response is not JSON: centre_id=%s topic=%s",
+            centre_id, topic,
+        )
+        return FetchResult("http", False, True, ttfb_ms, 0)
 
     number_matched = body.get("numberMatched") if isinstance(body, dict) else None
     if number_matched is None:
+        logger.warning(
+            "Global Replay synchronous response missing numberMatched: "
+            "centre_id=%s topic=%s",
+            centre_id, topic,
+        )
         return FetchResult("http", False, True, ttfb_ms, 0)
 
     try:
         count = int(number_matched)
     except (ValueError, TypeError):
+        logger.warning(
+            "Global Replay synchronous numberMatched not an integer (%r): "
+            "centre_id=%s topic=%s",
+            number_matched, centre_id, topic,
+        )
         return FetchResult("http", False, True, ttfb_ms, 0)
 
+    logger.info(
+        "Global Replay numberMatched: centre_id=%s topic=%s numberMatched=%d",
+        centre_id, topic, count,
+    )
     return FetchResult("http", False, False, ttfb_ms, count)
 
 
@@ -97,6 +144,7 @@ def async_fetch(
     deadline_s: float,
     registry: ReplayRegistry,
     baseline: int,
+    max_chars: int = 1000,
     poll_interval: float = 0.05,
     deadline_at: float | None = None,
 ) -> FetchResult:
@@ -129,14 +177,21 @@ def async_fetch(
     start = time.monotonic()
     deadline = start + deadline_s if deadline_at is None else deadline_at
 
+    interval = f"{start_iso}/{end_iso}"
     url = f"{replay_url}/processes/wis2-grep-subscriber/execution"
     payload = {
         "inputs": {
-            "datetime": f"{start_iso}/{end_iso}",
+            "datetime": interval,
             "subscriber-id": subscriber_id,
             "topic": topic,
         }
     }
+
+    logger.info(
+        "Global Replay request: centre_id=%s type=asynchronous topic=%s interval=%s "
+        "request=%s payload=%s",
+        centre_id, topic, interval, f"POST {url}", json.dumps(payload),
+    )
 
     invalid_format = False
     http_response_at: float | None = None
@@ -147,14 +202,29 @@ def async_fetch(
         )
         http_response_at = time.monotonic()
         try:
-            metadata = resp.json()
+            body_text = resp.text
         finally:
             resp.close()
+        logger.info(
+            "Global Replay response: centre_id=%s type=asynchronous topic=%s "
+            "response=%s",
+            centre_id, topic, _truncate(body_text, max_chars),
+        )
+        metadata = json.loads(body_text)
         invalid_format = not _validate_subscriptions(
             metadata, channel_prefix, broker_authorities
         )
+        if invalid_format:
+            logger.warning(
+                "Global Replay asynchronous metadata failed validation: "
+                "centre_id=%s topic=%s",
+                centre_id, topic,
+            )
     except (requests.RequestException, ValueError) as exc:
-        logger.warning("mqtt async POST failed for %s (%s): %s", url, topic, exc)
+        logger.warning(
+            "Global Replay asynchronous POST failed: centre_id=%s topic=%s reason=%s",
+            centre_id, topic, exc,
+        )
         invalid_format = True
         if http_response_at is None:
             http_response_at = time.monotonic()
@@ -177,6 +247,11 @@ def async_fetch(
     if first_monotonic is None:
         # No message arrived before the deadline: aborted.
         registry.unregister(expected_channel)
+        logger.warning(
+            "Global Replay asynchronous test aborted (no replay message within "
+            "the deadline): centre_id=%s topic=%s",
+            centre_id, topic,
+        )
         return FetchResult("mqtt", True, invalid_format, aborted_delay_ms, 0)
 
     fetch_delay_ms = (first_monotonic - start) * 1000

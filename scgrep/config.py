@@ -64,6 +64,7 @@ class Config:
     replay_brokers: list[BrokerConfig]
     redis_startup_timeout: int = 60
     replay_broker_tls_insecure: bool = False
+    log_http_response_max_chars: int = 1000
     subscriber_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
     @property
@@ -127,6 +128,9 @@ class Config:
             test_interval = int(env.get("TEST_INTERVAL", "300"))
             metrics_port = int(env.get("METRICS_PORT", "8000"))
             redis_startup_timeout = int(env.get("REDIS_STARTUP_TIMEOUT", "60"))
+            log_http_response_max_chars = int(
+                env.get("LOG_HTTP_RESPONSE_MAX_CHARS", "1000")
+            )
         except ValueError as exc:
             raise ConfigError(f"Invalid numeric configuration: {exc}") from exc
         if test_interval <= 0:
@@ -172,4 +176,5 @@ class Config:
             replay_brokers=replay_brokers,
             redis_startup_timeout=redis_startup_timeout,
             replay_broker_tls_insecure=replay_broker_tls_insecure,
+            log_http_response_max_chars=log_http_response_max_chars,
         )

@@ -122,7 +122,36 @@ All configuration is via environment variables (see `.env.example`).
 | `TIME_LAG` | `300` | Seconds after publication before messages are expected to be replayable. |
 | `TEST_INTERVAL` | `300` | Seconds between test cycles. |
 | `REDIS_STARTUP_TIMEOUT` | `60` | Seconds to wait for Redis to become reachable on startup before giving up. |
-| `LOG_LEVEL` | `INFO` | Python log level. |
+| `LOG_LEVEL` | `INFO` | Python log level. The detailed activity logs are at `INFO`; set `WARNING` to keep only warnings/errors. |
+| `LOG_HTTP_RESPONSE_MAX_CHARS` | `1000` | Max characters of an HTTP response body written to the log (longer bodies are truncated). |
+
+## Logging
+
+Logs go to stdout, each line timestamped (`docker compose logs -f scgrep` to
+follow). The detailed activity below is logged at `INFO` — **on by default** —
+so it is always captured unless explicitly turned off with `LOG_LEVEL=WARNING`
+(which keeps only the warnings/errors):
+
+- **Broker connections** — each Global Broker and replay broker connection, and
+  the exact topics subscribed on it.
+- **Test period start/finish** — the window each period covers.
+- **Unique broker messages** — every newly-seen message from the Global Brokers
+  (`topic`, `id`, `time`); duplicates that are discarded are not logged.
+- **Unique replay messages** — every newly-seen replay message
+  (`centre_id`, `topic`, `id`, `time`); duplicates from other replay brokers are
+  not logged.
+- **Requests** to a Global Replay service — `centre_id`, type (synchronous /
+  asynchronous), topic, datetime interval, and the full request (the POST payload
+  for asynchronous requests; HTTP headers are not logged).
+- **Responses** — `centre_id`, type, topic, and the response body truncated at
+  `LOG_HTTP_RESPONSE_MAX_CHARS`.
+- **`numberMatched`** extracted from each synchronous response.
+- **Per-result summary** — one line per (service, topic): baseline, fetched,
+  fetch delay, and the aborted / invalid-format flags.
+
+Emitted at `WARNING` (always shown): **aborted tests** (synchronous timeout or no
+replay within the deadline), **malformed / invalid responses**, failed process
+executions, and broker disconnects.
 
 ## Running
 

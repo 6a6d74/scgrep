@@ -8,6 +8,12 @@ BASE_ENV = {
 }
 
 
+def test_log_http_response_max_chars():
+    assert Config.from_env(dict(BASE_ENV)).log_http_response_max_chars == 1000
+    cfg = Config.from_env(dict(BASE_ENV, LOG_HTTP_RESPONSE_MAX_CHARS="250"))
+    assert cfg.log_http_response_max_chars == 250
+
+
 def test_defaults_applied():
     cfg = Config.from_env(dict(BASE_ENV))
     assert cfg.redis_url == "redis:6379"
