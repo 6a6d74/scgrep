@@ -25,3 +25,7 @@ logs/.purge-*
 .idea/
 .vscode/
 .DS_Store
+
+# Editor swap/backup files
+*.sw[a-p]
+*~
