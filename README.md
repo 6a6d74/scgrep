@@ -162,6 +162,25 @@ by message `pubtime`, and the Global Replay `datetime` filter does too.
 - **A raw `#` in a browser URL is a fragment**, not the MQTT wildcard — always
   encode it as `%23` (curl and the app already do).
 
+**How a genuine gap shows up across the metrics.** For a window the replay is
+missing (baseline non-zero, but the replay has the messages neither via `http`
+nor `mqtt`), expect all of the following together — they corroborate one gap, not
+several faults:
+
+- `messages_received` (baseline) **> 0**, `messages_fetched{http}` and
+  `messages_fetched{mqtt}` **= 0** (large `Differences` for both protocols);
+- `response_invalid_format_flag{http} = 0` — the `http` fetch got a clean
+  `numberMatched=0` response (nothing malformed);
+- `test_aborted_flag{mqtt} = 1` — because the baseline was non-zero the async
+  fetch waited for replay messages that never came and hit the deadline.
+
+That `mqtt` abort is *expected* for a real gap: the async fetch treats a
+non-zero **baseline** as "messages are due", so when the replay delivers none it
+aborts. It does not by itself mean the async *delivery* path is broken — the
+`http` `numberMatched=0` already shows the replay simply had nothing for that
+window. (An `mqtt` abort with `numberMatched > 0` would be the opposite case: the
+replay claimed messages but failed to deliver them over MQTT in time.)
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
