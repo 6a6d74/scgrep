@@ -104,6 +104,64 @@ The Grafana **Differences** panel (below) plots `baseline − fetched` directly,
 these gaps are easy to spot at a glance: a line hovering near zero is healthy;
 a line trending away from zero is a service that is losing or gaining messages.
 
+### Investigating a discrepancy
+
+When a topic shows a large baseline-vs-fetched gap for a window, confirm whether
+it is a genuine Global Replay gap (messages the service is missing) before
+concluding anything. Work with the window's **datetime interval** — SCGRep counts
+by message `pubtime`, and the Global Replay `datetime` filter does too.
+
+1. **Confirm the baseline is real** from the log **file** (not `docker logs`, see
+   the gotchas below). The per-cycle `Baseline:` line reports the count and the
+   interval; the received-message lines let you count directly:
+
+   ```bash
+   # baseline the app logged for that cycle
+   grep 'Baseline: topic=cache/a/wis2/us-noaa-nws/#' logs/scgrep.log \
+     | grep 'interval=2026-08-16T12:08:52Z/2026-08-16T12:09:52Z'
+
+   # messages actually received with pubtime in the window
+   grep 'Global Broker message: topic=cache/a/wis2/us-noaa-nws' logs/scgrep.log \
+     | grep -oE 'time=2026-08-16T[0-9:]+' | sed 's/time=2026-08-16T//' \
+     | awk -F: '{t=$1":"$2":"$3} t>="12:08:52" && t<="12:09:52"' | wc -l
+   ```
+
+2. **Ask the Global Replay directly** — URL-encode the `#` as `%23` (a browser
+   treats a raw `#` as a fragment and silently drops the wildcard, so it queries
+   the wrong topic and returns 0):
+
+   ```bash
+   curl -s "https://wis2-grep.weather.gc.ca/collections/wis2-notification-messages/items\
+   ?datetime=2026-08-16T12:08:52Z/2026-08-16T12:09:52Z&topic=cache/a/wis2/us-noaa-nws/%23" \
+     | python3 -c 'import sys,json; print("numberMatched:", json.load(sys.stdin)["numberMatched"])'
+   ```
+
+3. **Map it minute by minute** to see whether the replay has a real hole. Compare
+   the replay's `numberMatched` against the received count for each one-minute
+   window around the gap (widen the window first — a service with data at
+   `12:00–12:20` but `0` at `12:09–12:10` has genuinely lost that minute):
+
+   ```bash
+   for m in $(seq 4 12); do
+     s=$(printf '2026-08-16T12:%02d:00Z' $m); e=$(printf '2026-08-16T12:%02d:00Z' $((m+1)))
+     n=$(curl -s "https://wis2-grep.weather.gc.ca/collections/wis2-notification-messages/items?datetime=$s/$e&topic=cache/a/wis2/us-noaa-nws/%23" \
+         | python3 -c 'import sys,json; print(json.load(sys.stdin)["numberMatched"])')
+     echo "$s .. $e -> replay=$n"
+   done
+   ```
+
+   Minutes that match the baseline confirm the pipeline is sound; a minute where
+   the replay is well below the baseline (or `0`) is a genuine gap to raise with
+   the Global Replay operators.
+
+**Gotchas that make a real result look like a bug:**
+
+- **`docker logs scgrep` only shows the *current* container.** After any
+  `docker compose up`/restart the stream resets, so older windows appear empty.
+  The complete history is in `logs/scgrep.log`.
+- **A raw `#` in a browser URL is a fragment**, not the MQTT wildcard — always
+  encode it as `%23` (curl and the app already do).
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
