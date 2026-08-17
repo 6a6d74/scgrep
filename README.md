@@ -213,6 +213,10 @@ by message `pubtime`, and the Global Replay `datetime` filter does too.
   The complete history is in `logs/scgrep.log`.
 - **A raw `#` in a browser URL is a fragment**, not the MQTT wildcard — always
   encode it as `%23` (curl and the app already do).
+- **Date-qualify log greps** — `logs/scgrep.log` spans multiple days, so a
+  time-only filter like `awk '$2>="14:50:00"'` also matches *other days* at that
+  clock time and can inflate counts many-fold. Always pin the date too, e.g.
+  `awk '$1=="2026-08-17" && $2>="14:50:00" && $2<="15:06:00"'`.
 
 **How a genuine gap shows up across the metrics.** For a window the replay is
 missing (baseline non-zero, but the replay has the messages neither via `http`
