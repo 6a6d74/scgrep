@@ -3,7 +3,7 @@
   "title": "SCGRep - Global Replay performance",
   "tags": ["scgrep", "wis2"],
   "schemaVersion": 39,
-  "version": 8,
+  "version": 9,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -211,6 +211,33 @@
       },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_response_invalid_numberMatched_flag{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}", "legendFormat": "http - {{topic}}" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "8. HTTP response code",
+      "description": "HTTP status code of each test's request — the synchronous Features GET (last page when paging) and the asynchronous Processes POST. 200 = OK; 4xx/5xx = a replay-service error (e.g. an HTML gateway page); 0 = no response (connection failure/timeout).",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 42 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 200 }, { "color": "red", "value": 300 } ] },
+          "custom": { "drawStyle": "line", "lineInterpolation": "stepAfter", "lineWidth": 2, "fillOpacity": 10, "showPoints": "auto", "spanNulls": false, "thresholdsStyle": { "mode": "off" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_http_response_code_value{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}", "legendFormat": "http - {{topic}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_http_response_code_value{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}", "legendFormat": "mqtt - {{topic}}" }
       ]
     }
   ]

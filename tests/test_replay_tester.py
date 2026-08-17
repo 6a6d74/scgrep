@@ -59,6 +59,7 @@ def test_sync_fetch_counts_stores_and_matches():
     assert result.invalid_format is False
     assert result.invalid_number_matched is False
     assert result.messages_fetched == 2  # numberMatched
+    assert result.http_status == 200
     assert store.count_sync_messages(CENTRE, TOPIC, 0, 9_999_999_999) == 2
 
 
@@ -106,6 +107,15 @@ def test_sync_fetch_non_json():
 
 
 @responses.activate
+def test_sync_fetch_reports_error_status():
+    # A gateway error returns an HTML page with a 5xx status: capture the code.
+    responses.add(responses.GET, ITEMS_URL, body="<html>502 Bad Gateway</html>", status=502)
+    result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, _store())
+    assert result.invalid_format is True  # not JSON
+    assert result.http_status == 502
+
+
+@responses.activate
 def test_sync_fetch_timeout_aborts():
     responses.add(responses.GET, ITEMS_URL, body=requests.exceptions.ReadTimeout())
     result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 2.0, _store())
@@ -113,6 +123,7 @@ def test_sync_fetch_timeout_aborts():
     assert result.invalid_format is True
     assert result.messages_fetched == 0
     assert result.fetch_delay_ms == 2.0 * 1000
+    assert result.http_status == 0  # no response received
 
 
 @responses.activate
@@ -217,6 +228,7 @@ def test_async_fetch_receives_messages():
     assert result.invalid_format is False
     assert result.messages_fetched == 2
     assert result.fetch_delay_ms > 0
+    assert result.http_status == 200  # from the process-execution POST
 
 
 @responses.activate

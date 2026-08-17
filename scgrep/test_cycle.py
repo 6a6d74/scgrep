@@ -177,6 +177,7 @@ def _publish(
         1 if result.invalid_format else 0
     )
     metrics.fetch_delay.labels(**labels).set(result.fetch_delay_ms)
+    metrics.http_response_code.labels(**labels).set(result.http_status)
     # Cumulative counter: add this cycle's fetched count.
     metrics.messages_fetched.labels(**labels).inc(result.messages_fetched)
     # numberMatched validation applies to the synchronous (http) fetch only.

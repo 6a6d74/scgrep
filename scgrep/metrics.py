@@ -82,6 +82,14 @@ class Metrics:
             ["report_by", "centre_id", "topic", "protocol"],
             registry=self.registry,
         )
+        self.http_response_code = Gauge(
+            _METRIC_PREFIX + "http_response_code_value",
+            "HTTP status code of the fetch's request (synchronous Features GET — "
+            "the last page when paging — or asynchronous Processes POST); 0 = no "
+            "response received",
+            ["report_by", "centre_id", "topic", "protocol"],
+            registry=self.registry,
+        )
 
 
 class _QuietRequestHandler(WSGIRequestHandler):

@@ -48,6 +48,10 @@ class FetchResult:
     # http only: the count of features actually returned did not match
     # numberMatched. Always False for mqtt.
     invalid_number_matched: bool = False
+    # HTTP status code of the (last) request made by this fetch — the synchronous
+    # Features GET (paging: the final page's code) or the asynchronous Processes
+    # POST. 0 means no response was received (e.g. connection failure/timeout).
+    http_status: int = 0
 
 
 def _next_page_href(page: object) -> str | None:
@@ -98,6 +102,7 @@ def sync_fetch(
     start = time.monotonic()
     if deadline_at is None:
         deadline_at = start + deadline_s
+    last_status = 0  # HTTP status of the most recent response received
 
     def log_request(request_line: str) -> None:
         logger.info(
@@ -125,8 +130,9 @@ def sync_fetch(
             "Global Replay synchronous test aborted: centre_id=%s topic=%s reason=%s",
             centre_id, topic, exc,
         )
-        return FetchResult("http", True, True, aborted_delay_ms, 0)
+        return FetchResult("http", True, True, aborted_delay_ms, 0, http_status=last_status)
 
+    last_status = resp.status_code
     ttfb_ms = (time.monotonic() - start) * 1000
     try:
         body_text = resp.text
@@ -141,7 +147,7 @@ def sync_fetch(
             "Global Replay synchronous response is not JSON: centre_id=%s topic=%s",
             centre_id, topic,
         )
-        return FetchResult("http", False, True, ttfb_ms, 0)
+        return FetchResult("http", False, True, ttfb_ms, 0, http_status=last_status)
 
     number_matched = page.get("numberMatched") if isinstance(page, dict) else None
     if number_matched is None:
@@ -150,7 +156,7 @@ def sync_fetch(
             "centre_id=%s topic=%s",
             centre_id, topic,
         )
-        return FetchResult("http", False, True, ttfb_ms, 0)
+        return FetchResult("http", False, True, ttfb_ms, 0, http_status=last_status)
     try:
         number_matched = int(number_matched)
     except (ValueError, TypeError):
@@ -159,7 +165,7 @@ def sync_fetch(
             "centre_id=%s topic=%s",
             number_matched, centre_id, topic,
         )
-        return FetchResult("http", False, True, ttfb_ms, 0)
+        return FetchResult("http", False, True, ttfb_ms, 0, http_status=last_status)
 
     logger.info(
         "Global Replay numberMatched: centre_id=%s topic=%s numberMatched=%d",
@@ -189,6 +195,7 @@ def sync_fetch(
                 next_url, headers=_HEADERS,
                 timeout=max(0.05, deadline_at - time.monotonic()),
             )
+            last_status = resp.status_code
             body_text = resp.text
             resp.close()
             log_response(body_text)
@@ -212,7 +219,7 @@ def sync_fetch(
 
     return FetchResult(
         "http", False, False, ttfb_ms, number_matched,
-        invalid_number_matched=invalid_number_matched,
+        invalid_number_matched=invalid_number_matched, http_status=last_status,
     )
 
 
@@ -318,11 +325,13 @@ def async_fetch(
 
     invalid_format = False
     http_response_at: float | None = None
+    http_status = 0  # status of the process-execution POST (0 = no response)
     try:
         resp = requests.post(
             url, json=payload, headers=_HEADERS,
             timeout=max(0.05, deadline - time.monotonic()),
         )
+        http_status = resp.status_code
         http_response_at = time.monotonic()
         try:
             body_text = resp.text
@@ -368,7 +377,8 @@ def async_fetch(
     if not expect_messages:
         registry.unregister(expected_channel)
         fetch_delay_ms = (http_response_at - start) * 1000
-        return FetchResult("mqtt", False, invalid_format, fetch_delay_ms, 0)
+        return FetchResult("mqtt", False, invalid_format, fetch_delay_ms, 0,
+                           http_status=http_status)
 
     # Messages are expected: wait for the first replay message or the deadline.
     while time.monotonic() < deadline:
@@ -386,7 +396,8 @@ def async_fetch(
             "the deadline): centre_id=%s topic=%s",
             centre_id, topic,
         )
-        return FetchResult("mqtt", True, invalid_format, aborted_delay_ms, 0)
+        return FetchResult("mqtt", True, invalid_format, aborted_delay_ms, 0,
+                           http_status=http_status)
 
     fetch_delay_ms = (first_monotonic - start) * 1000
 
@@ -397,7 +408,8 @@ def async_fetch(
     count, _ = counter.snapshot()
     registry.unregister(expected_channel)
 
-    return FetchResult("mqtt", False, invalid_format, fetch_delay_ms, count)
+    return FetchResult("mqtt", False, invalid_format, fetch_delay_ms, count,
+                       http_status=http_status)
 
 
 def _validate_subscriptions(

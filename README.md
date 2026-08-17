@@ -52,6 +52,7 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 | `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Timeliness in milliseconds: `http` = time to first byte; `mqtt` = time to the first replayed message, or — when no messages are expected (`numberMatched = 0`) — the time to the process-execution HTTP response. |
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
 | `wmo_wis2_scgrep_response_invalid_numberMatched_flag` | `report_by`, `centre_id`, `topic`, `protocol` | **Synchronous (`http`) fetch only:** `1` if the number of messages actually returned (across all pages) did not equal `numberMatched`. |
+| `wmo_wis2_scgrep_http_response_code_value` | `report_by`, `centre_id`, `topic`, `protocol` | HTTP status code of the fetch's request — the synchronous Features `GET` (the **last** page when paging) or the asynchronous Processes `POST`. `200` = OK; `4xx`/`5xx` = a replay-service error (e.g. an HTML gateway page); `0` = no response (connection failure/timeout). |
 
 `protocol` is `http` (synchronous) or `mqtt` (asynchronous).
 
@@ -516,7 +517,7 @@ Global Replay service across the tested topics.
 - **Topic(s)** — the `topic` label, **multi-select** with an **All** option; the
   list is scoped to the selected service.
 
-**Panels** — six stacked time-series panels sharing one time axis and a shared
+**Panels** — eight stacked time-series panels sharing one time axis and a shared
 crosshair, so a hover lines up across all of them:
 
 | # | Panel | Series | Reads as |
@@ -528,6 +529,7 @@ crosshair, so a hover lines up across all of them:
 | 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = retrieval did not complete in time (`mqtt`: `numberMatched > 0` but nothing delivered over MQTT) |
 | 6 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
 | 7 | **Synchronous fetch validation** | `http` invalid-numberMatched flag (0/1) | 1 = the synchronous fetch returned a different message count than `numberMatched` |
+| 8 | **HTTP response code** | `http` and `mqtt` HTTP status code | 200 = OK (green); 4xx/5xx = replay-service error (red); 0 = no response |
 
 Because the baseline (`messages_received`) has no `centre_id` label, panels 1–3
 filter it by topic only; the `http`/`mqtt` series filter by both service and
