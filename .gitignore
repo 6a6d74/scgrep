@@ -29,3 +29,6 @@ logs/.purge-*
 # Editor swap/backup files
 *.sw[a-p]
 *~
+
+# Shareable discrepancy report (not part of the repo)
+docs/global-replay-discrepancy-2026-08-17-uk-metoffice.md
