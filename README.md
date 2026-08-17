@@ -518,7 +518,7 @@ Global Replay service across the tested topics.
 - **Topic(s)** — the `topic` label, **multi-select** with an **All** option; the
   list is scoped to the selected service.
 
-**Panels** — eight stacked time-series panels sharing one time axis and a shared
+**Panels** — nine stacked panels sharing one time axis and a shared
 crosshair, so a hover lines up across all of them:
 
 | # | Panel | Series | Reads as |
@@ -531,6 +531,7 @@ crosshair, so a hover lines up across all of them:
 | 6 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
 | 7 | **Synchronous fetch validation** | `http` invalid-numberMatched flag (0/1) | 1 = the synchronous fetch returned a different message count than `numberMatched` |
 | 8 | **HTTP response code** | `http` and `mqtt` HTTP status code | 200 = OK (green); 4xx/5xx = replay-service error (red); 0 = no response |
+| 9 | **Broker connections** | MQTT status per broker `url` (state timeline) | green = connected, red = disconnected — rules out local connectivity |
 
 Because the baseline (`messages_received`) has no `centre_id` label, panels 1–3
 filter it by topic only; the `http`/`mqtt` series filter by both service and

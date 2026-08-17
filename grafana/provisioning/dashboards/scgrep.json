@@ -3,7 +3,7 @@
   "title": "SCGRep - Global Replay performance",
   "tags": ["scgrep", "wis2"],
   "schemaVersion": 39,
-  "version": 9,
+  "version": 10,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -238,6 +238,39 @@
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_http_response_code_value{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}", "legendFormat": "http - {{topic}}" },
         { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_http_response_code_value{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}", "legendFormat": "mqtt - {{topic}}" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "state-timeline",
+      "title": "9. Broker connections",
+      "description": "MQTT connection status per broker (Global Broker and Global Replay broker). Green = connected (1), red = disconnected (0). Independent of the centre_id/topic selectors. Use it to rule out local connectivity when a replay test looks broken.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 48 },
+      "fieldConfig": {
+        "defaults": {
+          "min": 0,
+          "max": 1,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "disconnected" }, "1": { "text": "connected" } } }
+          ],
+          "custom": { "lineWidth": 0, "fillOpacity": 80 }
+        },
+        "overrides": []
+      },
+      "options": {
+        "mergeValues": true,
+        "showValue": "auto",
+        "alignValue": "left",
+        "rowHeight": 0.9,
+        "legend": { "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single", "sort": "none" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_broker_status_flag", "legendFormat": "{{url}}" }
       ]
     }
   ]
