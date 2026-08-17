@@ -90,9 +90,16 @@ class RedisStore:
         return True
 
     def count_messages(self, pattern: str, start_epoch: float, end_epoch: float) -> int:
-        """Count messages indexed under ``pattern`` within [start, end] (inclusive)."""
+        """Count messages indexed under ``pattern`` within **[start, end)**.
+
+        The upper bound is exclusive (Redis ``(`` syntax) so that consecutive test
+        windows are half-open and a message published exactly on a boundary is
+        counted in one window only, never both.
+        """
         return int(
-            self._redis.zcount(f"scgrep:topic:{pattern}", start_epoch, end_epoch)
+            self._redis.zcount(
+                f"scgrep:topic:{pattern}", start_epoch, f"({end_epoch}"
+            )
         )
 
     # -- Asynchronous replay counting -------------------------------------
@@ -136,10 +143,14 @@ class RedisStore:
     def count_replay_messages(
         self, centre_id: str, pattern: str, start_epoch: float, end_epoch: float
     ) -> int:
-        """Count deduplicated replay messages for a centre/topic within a window."""
+        """Count deduplicated replay messages for a centre/topic within [start, end).
+
+        Half-open like :meth:`count_messages`, so the baseline and the replay
+        counts are computed over exactly the same interval.
+        """
         return int(
             self._redis.zcount(
-                self._replay_key(centre_id, pattern), start_epoch, end_epoch
+                self._replay_key(centre_id, pattern), start_epoch, f"({end_epoch}"
             )
         )
 
@@ -181,10 +192,13 @@ class RedisStore:
     def count_sync_messages(
         self, centre_id: str, pattern: str, start_epoch: float, end_epoch: float
     ) -> int:
-        """Count synchronously-fetched messages for a centre/topic within a window."""
+        """Count synchronously-fetched messages for a centre/topic within [start, end).
+
+        Half-open like :meth:`count_messages`, for the same reason.
+        """
         return int(
             self._redis.zcount(
-                self._sync_key(centre_id, pattern), start_epoch, end_epoch
+                self._sync_key(centre_id, pattern), start_epoch, f"({end_epoch}"
             )
         )
 

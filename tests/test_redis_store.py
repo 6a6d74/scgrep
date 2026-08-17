@@ -31,6 +31,34 @@ def test_store_and_count(store):
     assert count == 2
 
 
+def test_count_window_is_half_open(store):
+    """[start, end): a message exactly on the lower bound counts, one exactly on
+    the upper bound does not — so consecutive windows never double-count."""
+    pattern = "cache/a/wis2/ca-eccc-msc/data/#"
+    topic = "cache/a/wis2/ca-eccc-msc/data/core/x"
+    start = float(int(time.time()) - 120)   # whole seconds, like a floored window
+    end = start + 60
+    store.store_message("lower", epoch_to_iso(start), topic)        # exactly at start
+    store.store_message("middle", epoch_to_iso(start + 30), topic)
+    store.store_message("upper", epoch_to_iso(end), topic)          # exactly at end
+
+    assert store.count_messages(pattern, start, end) == 2           # lower + middle
+    # The message on the boundary belongs to the NEXT window, exactly once.
+    assert store.count_messages(pattern, end, end + 60) == 1        # upper
+
+
+def test_adjacent_windows_partition_messages(store):
+    """Contiguous windows sum to the total: no message counted twice or dropped."""
+    pattern = "cache/a/wis2/ca-eccc-msc/data/#"
+    topic = "cache/a/wis2/ca-eccc-msc/data/core/x"
+    t0 = float(int(time.time()) - 180)
+    for i in range(12):                       # every 15 s across three 60 s windows
+        store.store_message(f"m{i}", epoch_to_iso(t0 + i * 15), topic)
+    counts = [store.count_messages(pattern, t0 + w * 60, t0 + (w + 1) * 60) for w in range(3)]
+    assert counts == [4, 4, 4]
+    assert sum(counts) == 12
+
+
 def test_duplicate_id_discarded(store):
     assert store.store_message("dup", iso_ago(60), "cache/a/wis2/ca-eccc-msc/data/x")
     assert not store.store_message("dup", iso_ago(30), "cache/a/wis2/ca-eccc-msc/data/x")

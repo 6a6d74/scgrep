@@ -181,7 +181,11 @@ count); nothing about Prometheus lives here, which keeps the logic testable.
 ### `test_cycle.py` — orchestrating one cycle
 
 `run_cycle` runs the test for the window
-`(now − TIME_LAG − TEST_INTERVAL) .. (now − TIME_LAG)`:
+`(now − TIME_LAG − TEST_INTERVAL) .. (now − TIME_LAG)`, **floored to whole
+seconds** and **half-open** `[start, end)` — so the baseline `ZCOUNT` and the
+ISO-8601 interval sent to the Global Replay (which `epoch_to_iso` truncates to
+whole seconds) cover exactly the same interval, and consecutive windows partition
+messages exactly once:
 
 1. Read the baseline for every topic from Redis (held, not yet published).
 2. `clear_replay` the per-centre replay sets — a clean sheet before any process

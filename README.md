@@ -92,6 +92,13 @@ the tool is to watch **how large** the difference is.
   updating stream.
 - Messages near the **edges of the datetime window** can fall on either side
   depending on exactly when each query runs, shifting a few messages in or out.
+  The test window is **floored to whole seconds** and treated as **half-open**
+  `[start, end)` so the baseline and the replay query cover an identical interval
+  and consecutive windows partition messages exactly once. (Without flooring, the
+  baseline would use sub-second bounds while the replay is asked for the
+  second-truncated interval — harmless for evenly-spread traffic, but it moves
+  whole bursts between adjacent windows for centres that publish many messages on
+  the same pub-time instant.)
 - The baseline reflects only what **this subscriber** actually received (subject
   to broker relay lag, deduplication, and connection timing), while the Global
   Replay store may hold marginally more or fewer for the same window.

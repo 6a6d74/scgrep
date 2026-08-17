@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import time
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -40,7 +41,15 @@ def run_cycle(
     """
     now = time.time() if now is None else now
     cycle_start = time.monotonic()
-    end_epoch = now - config.time_lag
+    # Floor the window to whole seconds. The Global Replay is queried with an
+    # ISO-8601 interval, and epoch_to_iso() truncates to whole seconds — so
+    # without this the baseline would be counted over sub-second bounds
+    # (e.g. 20:01:37.779) while the replay was asked for the truncated interval
+    # (20:01:37). Bursts of messages sharing a pub-time instant then land in
+    # different windows for the two sides. Flooring makes both cover exactly the
+    # same interval, and makes consecutive windows contiguous rather than
+    # drifting by a random fraction of a second.
+    end_epoch = math.floor(now - config.time_lag)
     start_epoch = end_epoch - config.test_interval
     start_iso = epoch_to_iso(start_epoch)
     end_iso = epoch_to_iso(end_epoch)

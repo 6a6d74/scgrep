@@ -1,3 +1,4 @@
+import math
 import threading
 import time
 
@@ -11,7 +12,7 @@ from scgrep.redis_store import RedisStore
 from scgrep.replay_registry import ReplayRegistry
 from scgrep.replay_tester import FetchResult
 from scgrep.test_cycle import run_cycle
-from scgrep.util import epoch_to_iso
+from scgrep.util import epoch_to_iso, parse_time_to_epoch
 
 REPLAY_URL = "https://replay.example.org"
 ITEMS_URL = f"{REPLAY_URL}/collections/wis2-notification-messages/items"
@@ -205,6 +206,52 @@ def test_all_metrics_published_together_after_fetches(monkeypatch):
     assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 5
     mqtt_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
     assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 2
+
+
+def test_window_is_floored_so_baseline_and_replay_query_match(monkeypatch):
+    """The baseline window and the ISO interval sent to the Global Replay must
+    cover exactly the same interval.
+
+    epoch_to_iso() truncates to whole seconds, so an unfloored window would count
+    the baseline over sub-second bounds (e.g. 20:01:37.779) while querying the
+    replay for the truncated interval (20:01:37) — misattributing bursts of
+    messages sharing a pub-time instant to the adjacent window.
+    """
+    cfg = Config.from_env(dict(ENV, TEST_INTERVAL="1"))
+    client = fakeredis.FakeRedis(decode_responses=True)
+    store = RedisStore("redis:6379", cfg.redis_expiry, cfg.subscription_topics, client=client)
+    metrics = Metrics()
+
+    seen = {}
+
+    def fake_sync(replay_url, centre_id, topic, start_iso, end_iso, *a, **k):
+        seen["iso"] = (start_iso, end_iso)
+        return FetchResult("http", False, False, 1.0, 0)
+
+    # Spy on the epochs actually used to count the baseline.
+    real_count = store.count_messages
+
+    def spy_count(pattern, start_epoch, end_epoch):
+        seen["epochs"] = (start_epoch, end_epoch)
+        return real_count(pattern, start_epoch, end_epoch)
+
+    monkeypatch.setattr(store, "count_messages", spy_count)
+    monkeypatch.setattr(tc, "sync_fetch", fake_sync)
+    monkeypatch.setattr(tc, "async_fetch", lambda *a, **k: FetchResult("mqtt", False, False, 2.0, 0))
+
+    # A deliberately "ugly" now with a large sub-second fraction.
+    now = float(int(time.time())) + 0.779
+    run_cycle(cfg, store, ReplayRegistry(), metrics, now=now)
+
+    start_iso, end_iso = seen["iso"]
+    start_epoch, end_epoch = seen["epochs"]
+    # The window used for the baseline must be EXACTLY the interval sent to the
+    # replay — no sub-second drift between the two sides.
+    assert (start_epoch, end_epoch) == (
+        parse_time_to_epoch(start_iso), parse_time_to_epoch(end_iso)
+    )
+    assert end_epoch == math.floor(now - cfg.time_lag)      # floored, not now-lag
+    assert end_epoch - start_epoch == cfg.test_interval
 
 
 def test_message_counters_accumulate_across_cycles(monkeypatch):
