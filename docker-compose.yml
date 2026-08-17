@@ -104,10 +104,14 @@ services:
       # OPERATIONAL CASE: once replays are routed via the operational Global
       # Brokers, leave this BLANK ("") — SCGRep then subscribes for replays on the
       # GLOBAL_BROKER_URLS brokers themselves (no separate replay broker needed).
-      GLOBAL_REPLAY_BROKER_URLS: "mqtts://everyone:everyone@gb.wis2dev.io:8883"
-      # The test Global Broker presents a valid certificate, so TLS is verified.
-      # (Set to "true" only if a replay broker's certificate lapses.)
-      GLOBAL_REPLAY_BROKER_TLS_INSECURE: "false"
+      # Subscribe for replays on BOTH the test Global Broker (gb.wis2dev.io) and
+      # the GRep instance's own broker (wis2-grep.weather.gc.ca) so we can see
+      # which broker actually delivers each replay message (is the GRep not
+      # publishing, or is the io-wis2dev broker not republishing?).
+      GLOBAL_REPLAY_BROKER_URLS: "mqtts://everyone:everyone@gb.wis2dev.io:8883,mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883"
+      # The GRep's own broker has historically presented a lapsed certificate, so
+      # skip TLS verification for the replay brokers while diagnosing.
+      GLOBAL_REPLAY_BROKER_TLS_INSECURE: "true"
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
       METRICS_PORT: "8000"
@@ -115,6 +119,9 @@ services:
       # testing; TIME_LAG kept at the operational 300.
       TIME_LAG: "300"
       TEST_INTERVAL: "60"
+      # DEBUG logs every MQTT message received (with source broker URL and a
+      # Duplicate? flag). Verbose — set back to INFO once diagnosis is done.
+      LOG_LEVEL: "DEBUG"
       # Also write logs to a file (in the mounted ./logs volume), flushed
       # periodically. The log-purge service trims this file hourly.
       LOG_FILE: /var/log/scgrep/scgrep.log

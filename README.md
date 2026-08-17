@@ -312,7 +312,7 @@ All configuration is via environment variables (see `.env.example`).
 | `TIME_LAG` | `300` | Seconds after publication before messages are expected to be replayable. |
 | `TEST_INTERVAL` | `300` | Seconds between test cycles. |
 | `REDIS_STARTUP_TIMEOUT` | `60` | Seconds to wait for Redis to become reachable on startup before giving up. |
-| `LOG_LEVEL` | `INFO` | Python log level. The detailed activity logs are at `INFO`; set `WARNING` to keep only warnings/errors. |
+| `LOG_LEVEL` | `INFO` | Python log level. The detailed activity logs are at `INFO`; set `WARNING` to keep only warnings/errors, or `DEBUG` to additionally log **every** MQTT message received (see Logging). |
 | `LOG_HTTP_RESPONSE_MAX_CHARS` | `1000` | Max characters of an HTTP response body written to the log (longer bodies are truncated). |
 | `LOG_FILE` | *(unset)* | Also write logs to this file (in addition to stdout). Unset/blank = stdout only. |
 | `LOG_FILE_FLUSH_INTERVAL` | `60` | How often (seconds) buffered logs are written to `LOG_FILE`. |
@@ -349,6 +349,18 @@ timeout or no replay within the deadline), **malformed / invalid responses**,
 failed process executions, broker disconnects, and a **`numberMatched` mismatch**
 (the synchronous fetch returned a different number of messages than
 `numberMatched`).
+
+With **`LOG_LEVEL=DEBUG`** an additional line is emitted for **every** MQTT
+message received (before deduplication), attributing it to its source broker and
+flagging discarded duplicates — useful for isolating which broker delivers (or
+fails to deliver) messages:
+
+```
+MQTT message received: broker=mqtts://gb.wis2dev.io:8883 topic=replay/a/wis2/… id=… time=… Duplicate?=false
+```
+
+This is **very verbose** at high message rates; use it for diagnosis, not steady
+state.
 
 Timestamps are **UTC**.
 

@@ -35,24 +35,33 @@ class MessageHandler:
         self._registry = registry
 
     def on_message(self, client, userdata, msg) -> None:
+        # paho passes each client's user_data, which we set to the (credential-free)
+        # broker URL so we can attribute every message to its source broker.
+        broker_url = userdata if isinstance(userdata, str) else "?"
         topic = msg.topic
         if topic.startswith("replay/"):
-            self._handle_replay(topic, msg.payload)
+            self._handle_replay(broker_url, topic, msg.payload)
             return
 
         parsed = self._parse_message(msg.payload)
         if parsed is None:
-            logger.debug("Ignoring message on %s: not JSON / missing id/time", topic)
+            logger.debug(
+                "MQTT message received: broker=%s topic=%s (unparseable: "
+                "not JSON / missing id/time)",
+                broker_url, topic,
+            )
             return
         msg_id, time_value = parsed
-        # Log only unique messages (store_message returns False for duplicates).
-        if self._store.store_message(msg_id, time_value, topic):
+        # store_message returns False for a duplicate (already seen / discarded).
+        is_new = self._store.store_message(msg_id, time_value, topic)
+        if is_new:
             logger.info(
                 "Global Broker message: topic=%s id=%s time=%s",
                 topic, msg_id, time_value,
             )
+        self._log_received(broker_url, topic, msg_id, time_value, is_new)
 
-    def _handle_replay(self, topic: str, payload) -> None:
+    def _handle_replay(self, broker_url: str, topic: str, payload) -> None:
         # First-arrival timing / abort detection (every arrival, any broker).
         self._registry.handle_replay(topic)
 
@@ -65,16 +74,32 @@ class MessageHandler:
         original_topic = "/".join(parts[5:])
         parsed = self._parse_message(payload)
         if parsed is None:
+            logger.debug(
+                "MQTT message received: broker=%s topic=%s (replay, unparseable)",
+                broker_url, topic,
+            )
             return
         msg_id, time_value = parsed
-        # Log only unique replay messages (False for duplicates from other brokers).
-        if self._store.store_replay_message(
+        # store_replay_message returns False for a duplicate (e.g. the same
+        # message relayed by more than one broker).
+        is_new = self._store.store_replay_message(
             centre_id, msg_id, time_value, original_topic
-        ):
+        )
+        if is_new:
             logger.info(
                 "Replay message (asynchronous): centre_id=%s topic=%s id=%s time=%s",
                 centre_id, original_topic, msg_id, time_value,
             )
+        self._log_received(broker_url, topic, msg_id, time_value, is_new)
+
+    @staticmethod
+    def _log_received(broker_url, topic, msg_id, time_value, is_new) -> None:
+        """DEBUG line for *every* MQTT message (before dedup), attributing it to a
+        broker and flagging whether it was a discarded duplicate."""
+        logger.debug(
+            "MQTT message received: broker=%s topic=%s id=%s time=%s Duplicate?=%s",
+            broker_url, topic, msg_id, time_value, "false" if is_new else "true",
+        )
 
     @staticmethod
     def _parse_message(payload) -> tuple[str, str] | None:
@@ -139,6 +164,9 @@ class MqttManager:
         client = mqtt.Client(
             CallbackAPIVersion.VERSION2, client_id=client_id, clean_session=True
         )
+        # Carry the broker URL as user_data so on_message can attribute each
+        # message to the broker it arrived on.
+        client.user_data_set(self._broker_url(broker))
         if broker.username is not None:
             client.username_pw_set(broker.username, broker.password)
         if broker.tls:

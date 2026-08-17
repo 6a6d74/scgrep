@@ -1,8 +1,14 @@
+import json
+import logging
 from unittest.mock import Mock
+
+import fakeredis
 
 from scgrep.config import BrokerConfig, Config
 from scgrep.metrics import Metrics
-from scgrep.mqtt_client import MqttManager
+from scgrep.mqtt_client import MessageHandler, MqttManager
+from scgrep.redis_store import RedisStore
+from scgrep.replay_registry import ReplayRegistry
 
 ENV = {
     "SENSOR_CENTRE_ID": "io-wis2dev-test-sensor-centre",
@@ -61,3 +67,49 @@ def test_status_helper_noop_without_metrics():
     mgr = MqttManager(cfg, Mock(), metrics=None)
     # Must not raise when no metrics object was provided.
     mgr._set_broker_status(BROKER, True)
+
+
+# --------------------------------------------------------------------------
+# MessageHandler DEBUG logging (broker attribution + Duplicate? flag)
+# --------------------------------------------------------------------------
+
+class _Msg:
+    def __init__(self, topic, payload):
+        self.topic = topic
+        self.payload = payload
+
+
+def _handler():
+    client = fakeredis.FakeRedis(decode_responses=True)
+    store = RedisStore("redis:6379", 300, ["cache/a/wis2/x/#"], client=client)
+    return MessageHandler(store, ReplayRegistry())
+
+
+def _payload(mid="m1"):
+    return json.dumps(
+        {"id": mid, "properties": {"pubtime": "2026-08-17T10:00:00Z"}}
+    ).encode()
+
+
+def test_on_message_debug_logs_broker_url_and_duplicate(caplog):
+    handler = _handler()
+    url = "mqtts://gb.wis2dev.io:8883"
+    msg = _Msg("cache/a/wis2/x/data/core/y", _payload())
+    with caplog.at_level(logging.DEBUG, logger="scgrep.mqtt_client"):
+        handler.on_message(None, url, msg)  # first arrival
+        handler.on_message(None, url, msg)  # duplicate
+    text = caplog.text
+    assert f"MQTT message received: broker={url}" in text
+    assert "Duplicate?=false" in text  # first time
+    assert "Duplicate?=true" in text   # second time (discarded)
+
+
+def test_on_message_replay_debug_log_attributes_broker(caplog):
+    handler = _handler()
+    url = "mqtts://wis2-grep.weather.gc.ca:8883"
+    topic = "replay/a/wis2/ca-eccc/uuid/cache/a/wis2/x/data/core/y"
+    with caplog.at_level(logging.DEBUG, logger="scgrep.mqtt_client"):
+        handler.on_message(None, url, _Msg(topic, _payload("r1")))
+    text = caplog.text
+    assert f"broker={url}" in text and "Duplicate?=false" in text
+    assert "Replay message (asynchronous)" in text  # INFO line still emitted
