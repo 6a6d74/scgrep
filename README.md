@@ -450,6 +450,17 @@ filter it by topic only; the `http`/`mqtt` series filter by both service and
 topic. See [Why the baseline and fetch counts differ](#why-the-baseline-and-fetch-counts-differ)
 for how to interpret panels 1 and 2.
 
+**Second dashboard — "SCGRep - KPI performance"** (uid `scgrep-kpi`, also
+auto-provisioned) evaluates longer-run KPI performance. It mirrors panels 1–3 but
+over a **rolling 1-hour** window using `increase(...[1h])` (at the 1h scale the
+`increase()` extrapolation is negligible, so it reads as the trailing-hour count):
+
+| # | Panel | Series | Reads as |
+| --- | --- | --- | --- |
+| 1 | **Totals over 1h** | `increase[1h]` of baseline, `http`, `mqtt` | messages each route saw in the trailing hour |
+| 2 | **Differences over 1h** | `increase[1h]` of `baseline − http`, `baseline − mqtt` | hourly shortfall/surplus per route |
+| 3 | **Worst-case deviation (% of baseline) over 1h** | per topic, `max(\|http %\|, \|mqtt %\|)` of the 1h sums | one line per topic = the larger absolute deviation of the two routes; 0% = both matched the baseline |
+
 The rest of this section is for pointing an **external** Prometheus at SCGRep.
 
 ### 1. Add a scrape job

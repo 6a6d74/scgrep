@@ -1,0 +1,121 @@
+{
+  "uid": "scgrep-kpi",
+  "title": "SCGRep - KPI performance",
+  "tags": ["scgrep", "wis2", "kpi"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "refresh": "1m",
+  "time": { "from": "now-12h", "to": "now" },
+  "timepicker": {},
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "type": "query",
+        "name": "centre_id",
+        "label": "Global Replay service",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(wmo_wis2_scgrep_messages_fetched_total, centre_id)",
+        "query": "label_values(wmo_wis2_scgrep_messages_fetched_total, centre_id)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": false,
+        "includeAll": false,
+        "current": {}
+      },
+      {
+        "type": "query",
+        "name": "topic",
+        "label": "Topic(s)",
+        "datasource": { "type": "prometheus", "uid": "prometheus" },
+        "definition": "label_values(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\"}, topic)",
+        "query": "label_values(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\"}, topic)",
+        "refresh": 2,
+        "sort": 1,
+        "multi": true,
+        "includeAll": true,
+        "allValue": ".*",
+        "current": {}
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "1. Totals - messages over 1h",
+      "description": "Rolling 1-hour message totals: increase(counter[1h]) for baseline, http and mqtt. Over a 1h window the extrapolation is negligible (unlike the 60s panels), so this reads as the count of messages in the trailing hour.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "5m",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "auto", "spanNulls": false }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[1h])", "legendFormat": "received - {{topic}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[1h])", "legendFormat": "http - {{topic}}" },
+        { "refId": "C", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[1h])", "legendFormat": "mqtt - {{topic}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "2. Differences - baseline minus fetched over 1h",
+      "description": "Rolling 1-hour difference between the baseline and each fetch route: increase(received[1h]) - increase(fetched[1h]). Near zero = healthy; growing = the service is losing (positive) or gaining (negative) messages over the hour.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "5m",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "auto", "spanNulls": false }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "min", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[1h]) - on(report_by, topic) group_right() increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"http\", topic=~\"$topic\"}[1h])", "legendFormat": "received - http - {{topic}}" },
+        { "refId": "B", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[1h]) - on(report_by, topic) group_right() increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", protocol=\"mqtt\", topic=~\"$topic\"}[1h])", "legendFormat": "received - mqtt - {{topic}}" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "3. Worst-case deviation - % of baseline over 1h",
+      "description": "For each topic, the WORST (largest absolute) deviation of http or mqtt from the baseline, as a percentage, over the rolling 1-hour window: max(|100*(1 - http_1h/received_1h)|, |100*(1 - mqtt_1h/received_1h)|). 0% = both routes matched the baseline; higher = a bigger discrepancy on at least one route. Undefined (no line) when the 1h baseline is zero.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "5m",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "decimals": 1,
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "auto", "spanNulls": false }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "max without(protocol) (abs(100 * (1 - increase(wmo_wis2_scgrep_messages_fetched_total{centre_id=\"$centre_id\", topic=~\"$topic\"}[1h]) / on(report_by, topic) group_left() increase(wmo_wis2_scgrep_messages_received_total{topic=~\"$topic\"}[1h]))))", "legendFormat": "worst - {{topic}}" }
+      ]
+    }
+  ]
+}
