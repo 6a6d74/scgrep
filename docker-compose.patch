@@ -1,0 +1,211 @@
+diff --git a/docker-compose.yml b/docker-compose.yml
+index a6f15da..3b94541 100644
+--- a/docker-compose.yml
++++ b/docker-compose.yml
+@@ -1,137 +1,50 @@
+-# SCGRep deployment (self-contained).
++# SCGRep deployment — uses shared infrastructure from /Users/jeremytandy/docker/compose/
++# (traefik, redis, prometheus, grafana are provided externally).
+ #
+-# This stack runs everything it needs: a managed Redis, the SCGRep service, and
+-# a Traefik reverse proxy. All three share a single Compose-managed bridge
+-# network named "traefik".
+-#
+-# SCGRep waits for Redis via `depends_on` (Redis has a healthcheck), and reaches
+-# it at redis:6379. Ingress is handled by Traefik using the file provider
+-# (./traefik/dynamic.yml); SCGRep does not publish its port directly. With the
+-# defaults below:
+-#
+-#   http://localhost/metrics     (metrics, via Traefik on :80)
+-#   http://localhost/dashboard/  (Traefik dashboard, behind HTTP basic auth)
+-#
+-#   docker compose up --build
++#   docker compose up -d
+ 
+ services:
+-  traefik:
+-    image: traefik:v3.1
+-    container_name: traefik
+-    restart: unless-stopped
+-    command:
+-      # File provider (no docker socket needed): routing is defined in
+-      # ./traefik/dynamic.yml, which points at the scgrep service by name and
+-      # exposes the dashboard behind HTTP basic auth.
+-      - "--providers.file.filename=/etc/traefik/dynamic.yml"
+-      - "--providers.file.watch=true"
+-      - "--entrypoints.web.address=:80"
+-      # Redirect all plain HTTP to HTTPS so endpoints are published over TLS.
+-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+-      - "--entrypoints.websecure.address=:443"
+-      # Dashboard enabled but NOT insecure: it is served through the `websecure`
+-      # entrypoint behind the basic-auth middleware (see dynamic.yml).
+-      - "--api.dashboard=true"
+-      # Liveness endpoint (/ping) used by the container healthcheck below.
+-      - "--ping=true"
+-    ports:
+-      - "80:80"
+-      - "443:443"
+-    volumes:
+-      - ./traefik/dynamic.yml:/etc/traefik/dynamic.yml:ro
+-      # Gitignored basic-auth credentials; create from the example first:
+-      #   cp traefik/dashboard-users.example traefik/dashboard-users
+-      - ./traefik/dashboard-users:/etc/traefik/dashboard-users:ro
+-      # Gitignored mkcert TLS certificates (see README). If absent, Traefik falls
+-      # back to its self-signed default certificate.
+-      - ./traefik/certs:/etc/traefik/certs:ro
+-    healthcheck:
+-      # The distroless Traefik image ships no shell/curl; use its built-in
+-      # healthcheck CLI against the /ping endpoint enabled above.
+-      test: ["CMD", "traefik", "healthcheck", "--ping"]
+-      interval: 10s
+-      timeout: 5s
+-      retries: 3
+-      start_period: 5s
+-    networks:
+-      - traefik
+-
+-  redis:
+-    image: redis:7-alpine
+-    # No explicit container_name: reachable as "redis" on the network via its
+-    # Compose service name, without colliding with any other "redis" container.
+-    restart: unless-stopped
+-    healthcheck:
+-      test: ["CMD", "redis-cli", "ping"]
+-      interval: 10s
+-      timeout: 3s
+-      retries: 5
+-      start_period: 5s
+-    networks:
+-      - traefik
+-
+   scgrep:
+     build: .
+     image: scgrep:latest
+     container_name: scgrep
+     restart: unless-stopped
+-    depends_on:
+-      redis:
+-        condition: service_healthy
+-    # An optional .env can supply/override extra values; anything set in the
+-    # `environment` block below takes precedence over it (Compose evaluates
+-    # `environment` after `env_file`).
+     env_file:
+       - path: .env
+         required: false
+     environment:
+-      SENSOR_CENTRE_ID: io-wis2dev-myinstance-sensor-centre-global-replay
+-      # Curated list of topics to test (cache/notification topics for several
+-      # centres); normally 10-20 topics mixing notification and event topics.
++      SENSOR_CENTRE_ID: net-ts-moray-pumpkinseed-mini-sensor-centre-global-replay
+       SUBSCRIPTION_TOPICS: "cache/a/wis2/us-noaa-nws/#,cache/a/wis2/uk-metoffice/#,cache/a/wis2/kg-kyrgyzhydromet/#,cache/a/wis2/int-eumetsat/#,cache/a/wis2/be-rmib/#"
+       GLOBAL_BROKER_URLS: "mqtts://everyone:everyone@globalbroker.meteo.fr:8883"
+       GLOBAL_REPLAY_CENTRE_IDS: ca-eccc-msc-global-replay
+       GLOBAL_REPLAY_URLS: "https://wis2-grep.weather.gc.ca"
+-      # Comma-delimited broker(s) on which the Global Replay service delivers
+-      # async replay messages (one during this preoperational phase). The
+-      # operational Global Brokers do not (yet) republish this GRep instance's
+-      # messages, but the WIS2 test Global Broker (io-wis2dev-global-broker) is
+-      # connected to the GRep's local broker and republishes them, so we subscribe
+-      # for replays there. (The GRep's own broker,
+-      # mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883, also works.)
+-      #
+-      # OPERATIONAL CASE: once replays are routed via the operational Global
+-      # Brokers, leave this BLANK ("") — SCGRep then subscribes for replays on the
+-      # GLOBAL_BROKER_URLS brokers themselves (no separate replay broker needed).
+       GLOBAL_REPLAY_BROKER_URLS: "mqtts://everyone:everyone@gb.wis2dev.io:8883"
+-      # The test Global Broker presents a valid certificate, so TLS is verified.
+-      # (Set to "true" only if a replay broker's certificate lapses.)
+       GLOBAL_REPLAY_BROKER_TLS_INSECURE: "false"
+       REDIS_URL: redis:6379
+       METRICS_ENDPOINT: /metrics
+       METRICS_PORT: "8000"
+-      # Timing (seconds). TEST_INTERVAL shortened to 60 for more frequent
+-      # testing; TIME_LAG kept at the operational 300.
+       TIME_LAG: "300"
+       TEST_INTERVAL: "60"
+-      # Also write logs to a file (in the mounted ./logs volume), flushed
+-      # periodically. The log-purge service trims this file hourly.
+       LOG_FILE: /var/log/scgrep/scgrep.log
+       LOG_FILE_FLUSH_INTERVAL: "60"
++    labels:
++      traefik.enable: true
++      traefik.http.routers.scgrep.entrypoints: websecure
++      traefik.http.routers.scgrep.rule: Host(`mini.moray-pumpkinseed.ts.net`) && PathPrefix(`/scgrep`)
++      traefik.http.services.scgrep.loadbalancer.server.port: 8000
++      traefik.http.services.scgrep.loadbalancer.server.scheme: http
++      traefik.http.routers.scgrep.tls: true
++      traefik.http.middlewares.scgrep-strip.stripprefix.prefixes: "/scgrep"
++      traefik.http.routers.scgrep.middlewares: scgrep-strip
+     volumes:
+       - ./logs:/var/log/scgrep
+-    # No published ports: Traefik fronts the metrics endpoint, reaching this
+-    # container by service name (scgrep:8000) over the shared network.
+     healthcheck:
+-      # Probe the metrics endpoint (honours METRICS_PORT/METRICS_ENDPOINT).
+-      # No curl/wget in the slim image, so use Python; urlopen raises on non-200.
+       test:
+         - CMD
+         - python
+         - -c
+         - |
+-          import os, sys, urllib.request
++          import os, urllib.request
+           port = os.environ.get("METRICS_PORT", "8000")
+           endpoint = os.environ.get("METRICS_ENDPOINT", "/metrics")
+           urllib.request.urlopen(f"http://localhost:{port}{endpoint}", timeout=5)
+@@ -142,9 +55,6 @@ services:
+     networks:
+       - traefik
+ 
+-  # Hourly job that trims the shared log file, removing entries older than
+-  # PURGE_LOG_MAX_AGE_HOURS. Reuses the scgrep image (it has Python) and runs the
+-  # standalone script mounted from ./scripts.
+   log-purge:
+     image: scgrep:latest
+     depends_on:
+@@ -168,43 +78,7 @@ services:
+     networks:
+       - traefik
+ 
+-  prometheus:
+-    image: prom/prometheus:v3
+-    # No explicit container_name (avoids colliding with any other "prometheus"
+-    # container); reachable as "prometheus" on the network by service name.
+-    restart: unless-stopped
+-    depends_on:
+-      - scgrep
+-    volumes:
+-      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+-      - prometheus-data:/prometheus
+-    ports:
+-      - "9090:9090"   # Prometheus UI
+-    networks:
+-      - traefik
+-
+-  grafana:
+-    image: grafana/grafana:latest
+-    restart: unless-stopped
+-    depends_on:
+-      - prometheus
+-    environment:
+-      # Default local credentials — change for anything beyond local testing.
+-      GF_SECURITY_ADMIN_USER: admin
+-      GF_SECURITY_ADMIN_PASSWORD: admin
+-    volumes:
+-      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+-      - grafana-data:/var/lib/grafana
+-    ports:
+-      - "3000:3000"   # Grafana UI
+-    networks:
+-      - traefik
+-
+ networks:
+   traefik:
+-    # Compose-managed bridge network shared by all services in this stack.
++    external: true
+     name: traefik
+-
+-volumes:
+-  prometheus-data:
+-  grafana-data:

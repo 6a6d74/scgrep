@@ -398,6 +398,35 @@ docker compose up --build
 If you change `METRICS_PORT`, update the backend URL in `traefik/dynamic.yml` to
 match.
 
+### Running alongside existing shared services
+
+If you already have Traefik, Redis, Prometheus, and Grafana running as shared
+infrastructure, you can run SCGRep without its bundled copies of those services.
+A patch is provided that strips them from `docker-compose.yml` and adds Docker
+labels so the existing Traefik auto-discovers SCGRep via its Docker provider:
+
+```bash
+git apply docker-compose.patch
+docker compose up -d
+```
+
+The patched compose file:
+- Removes the `traefik`, `redis`, `prometheus`, and `grafana` services
+- Marks the `traefik` network as `external: true` so Compose uses the existing one
+- Adds Traefik Docker labels to the `scgrep` service for automatic routing
+- Removes the `depends_on: redis` health-gate (Redis is assumed already healthy)
+
+SCGRep's metrics will be available at the path `/scgrep/metrics` via the shared
+Traefik instance. You will also need to add a scrape job to your Prometheus config:
+
+```yaml
+- job_name: 'scgrep'
+  scheme: http
+  metrics_path: '/metrics'
+  static_configs:
+    - targets: ['scgrep:8000']
+```
+
 ### Locally (development)
 
 ```bash
