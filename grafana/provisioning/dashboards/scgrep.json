@@ -3,7 +3,7 @@
   "title": "SCGRep - Global Replay performance",
   "tags": ["scgrep", "wis2"],
   "schemaVersion": 39,
-  "version": 6,
+  "version": 7,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -48,6 +48,7 @@
       "title": "1. Totals - messages per interval",
       "description": "Per-interval message counts, computed as increase(...[60s]) over the cumulative counters (which are incremented, not reset, each test period).",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
       "fieldConfig": {
         "defaults": {
@@ -71,6 +72,7 @@
       "type": "timeseries",
       "title": "2. Differences - baseline minus fetched",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 6 },
       "fieldConfig": {
         "defaults": {
@@ -94,6 +96,7 @@
       "title": "3. Differences - percentage of baseline",
       "description": "Panel 2 as a percentage of the baseline: 100 * (received - fetched) / received. 0% is a perfect match; positive = the service returned fewer messages than the baseline. Undefined (no line) when the baseline is zero.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 12 },
       "fieldConfig": {
         "defaults": {
@@ -117,6 +120,7 @@
       "type": "timeseries",
       "title": "4. Timeliness - fetch delay",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 18 },
       "fieldConfig": {
         "defaults": {
@@ -139,6 +143,7 @@
       "type": "timeseries",
       "title": "5. Test status - aborted flag",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 24 },
       "fieldConfig": {
         "defaults": {
@@ -163,6 +168,7 @@
       "type": "timeseries",
       "title": "6. Format validation - invalid format flag",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 30 },
       "fieldConfig": {
         "defaults": {
@@ -188,6 +194,7 @@
       "title": "7. Synchronous fetch validation - invalid numberMatched",
       "description": "1 when the number of messages returned by the synchronous (http) fetch did not equal numberMatched. Applies to the synchronous fetch only.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 36 },
       "fieldConfig": {
         "defaults": {
