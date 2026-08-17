@@ -236,6 +236,38 @@ within the deadline — a genuine async-delivery problem, distinct from a data g
 is unavailable (the synchronous fetch itself failed), the async fetch falls back
 to the baseline for this decision.
 
+**When `http` is far *above* the baseline — suspect topic over-matching.** A
+`messages_fetched{http}` that is orders of magnitude larger than the baseline
+(with `mqtt` and the live baseline agreeing at the *low* value) is often **not**
+missing data — it is the replay's synchronous `topic` filter over-matching. Some
+Global Replay implementations match the `topic` parameter as a **string prefix**
+rather than by MQTT topic level, so `cache/a/wis2/uk-metoffice/#` also returns a
+sibling centre whose id merely *starts with* the same string (e.g.
+`cache/a/wis2/uk-metoffice-globalwave/...`). Diagnose it by tallying the returned
+messages' own `properties.topic`:
+
+```bash
+python3 - <<'PY'
+import requests
+from collections import Counter
+from urllib.parse import urljoin
+base="https://<replay-host>/collections/wis2-notification-messages/items"
+c=Counter(); page=requests.get(base, params={
+    "datetime":"2026-08-17T10:31:00Z/2026-08-17T10:34:00Z",
+    "topic":"cache/a/wis2/uk-metoffice/#", "limit":500}).json()
+while page:
+    for f in page.get("features") or []:
+        c[(f["properties"]["topic"].split("/")+[""]*4)[3]] += 1  # centre-id level
+    nxt=next((l["href"] for l in page.get("links",[]) if l.get("rel")=="next"), None)
+    page=requests.get(nxt).json() if nxt else None
+print(c)  # e.g. {'uk-metoffice-globalwave': 6315, 'uk-metoffice': 40}
+PY
+```
+
+If the tally shows centre-ids other than the one you queried, it is a replay-side
+matching bug, not lost data. (SCGRep's *live* baseline and its *async* count both
+apply proper topic-level matching, so they stay correct — only `http` is inflated.)
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
