@@ -96,22 +96,20 @@ services:
       # Comma-delimited broker(s) on which the Global Replay service delivers
       # async replay messages (one during this preoperational phase). The
       # operational Global Brokers do not (yet) republish this GRep instance's
-      # messages, but the WIS2 test Global Broker (io-wis2dev-global-broker) is
-      # connected to the GRep's local broker and republishes them, so we subscribe
-      # for replays there. (The GRep's own broker,
-      # mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883, also works.)
+      # messages, so we subscribe for replays on the GRep instance's OWN broker.
+      #
+      # A dual-broker measurement (2026-08-17) showed that broker carries 100% of
+      # the replay messages, while the WIS2 test Global Broker (gb.wis2dev.io,
+      # io-wis2dev-global-broker) relayed only ~47% of them — subscribing there
+      # lost ~53% and caused spurious asynchronous aborts.
       #
       # OPERATIONAL CASE: once replays are routed via the operational Global
       # Brokers, leave this BLANK ("") — SCGRep then subscribes for replays on the
       # GLOBAL_BROKER_URLS brokers themselves (no separate replay broker needed).
-      # Subscribe for replays on BOTH the test Global Broker (gb.wis2dev.io) and
-      # the GRep instance's own broker (wis2-grep.weather.gc.ca) so we can see
-      # which broker actually delivers each replay message (is the GRep not
-      # publishing, or is the io-wis2dev broker not republishing?).
-      GLOBAL_REPLAY_BROKER_URLS: "mqtts://everyone:everyone@gb.wis2dev.io:8883,mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883"
-      # The GRep's own broker has historically presented a lapsed certificate, so
-      # skip TLS verification for the replay brokers while diagnosing.
-      GLOBAL_REPLAY_BROKER_TLS_INSECURE: "true"
+      GLOBAL_REPLAY_BROKER_URLS: "mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883"
+      # The GRep broker's certificate is currently valid (Entrust, to 2026-11-14),
+      # so TLS is verified. Set to "true" only if a replay broker's cert lapses.
+      GLOBAL_REPLAY_BROKER_TLS_INSECURE: "false"
       REDIS_URL: redis:6379
       METRICS_ENDPOINT: /metrics
       METRICS_PORT: "8000"
@@ -119,9 +117,10 @@ services:
       # testing; TIME_LAG kept at the operational 300.
       TIME_LAG: "300"
       TEST_INTERVAL: "60"
-      # DEBUG logs every MQTT message received (with source broker URL and a
-      # Duplicate? flag). Verbose — set back to INFO once diagnosis is done.
-      LOG_LEVEL: "DEBUG"
+      # INFO for steady state. Set to DEBUG to additionally log every MQTT message
+      # received with its source broker and a Duplicate? flag (very verbose — use
+      # for diagnosis only, e.g. comparing delivery between two replay brokers).
+      LOG_LEVEL: "INFO"
       # Also write logs to a file (in the mounted ./logs volume), flushed
       # periodically. The log-purge service trims this file hourly.
       LOG_FILE: /var/log/scgrep/scgrep.log
