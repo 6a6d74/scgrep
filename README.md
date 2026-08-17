@@ -268,6 +268,25 @@ If the tally shows centre-ids other than the one you queried, it is a replay-sid
 matching bug, not lost data. (SCGRep's *live* baseline and its *async* count both
 apply proper topic-level matching, so they stay correct — only `http` is inflated.)
 
+**`invalid_format` across many topics at once — the replay returned an HTML error
+page.** When `response_invalid_format_flag` goes to `1` for **several topics in the
+same cycles** (often with `test_aborted_flag{mqtt} = 1` alongside), the usual cause
+is a transient **replay-service outage**: a gateway/5xx error returns an **HTML
+page instead of JSON**, so the synchronous fetch can't parse a response and the
+asynchronous POST never triggers a replay (so nothing is delivered → the async
+aborts). It is service-wide and time-boxed, not a per-topic data problem, and it
+clears when the service recovers. Confirm it in the logs:
+
+```bash
+grep -E "response is not JSON|asynchronous POST failed.*Expecting value|response=<html>" logs/scgrep.log
+```
+
+Distinguish it from a genuine gap by its **breadth and timing**: a real gap is
+confined to one topic/window; an outage flips `invalid_format` for many topics at
+the same timestamps and then stops. (Isolated `mqtt` aborts with `invalid_format =
+0`, by contrast, are just single-window delivery-latency misses — the first replay
+message arrived after the 95% deadline — not an outage.)
+
 ## Configuration
 
 All configuration is via environment variables (see `.env.example`).
