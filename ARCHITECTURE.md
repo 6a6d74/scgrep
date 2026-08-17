@@ -200,8 +200,9 @@ count); nothing about Prometheus lives here, which keeps the logic testable.
    `mqtt` — so a single Prometheus scrape always sees a consistent set for the
    cycle rather than a mix of old and new values. The two message metrics are
    cumulative **counters** incremented by the cycle's counts (never reset), so
-   Grafana derives the per-interval value with `increase(...[60s])`; the flags and
-   delay are gauges that are set outright.
+   Grafana derives the per-interval value with the exact 60s delta
+   `X - X offset 60s` (integer counts; `increase(...[60s])` would extrapolate to
+   non-integer values); the flags and delay are gauges that are set outright.
 
 ### `metrics.py` — Prometheus metrics
 
@@ -209,8 +210,7 @@ Defines the metrics (see the [README](README.md#metrics)) in a dedicated registr
 and serves them over a tiny WSGI HTTP server at `METRICS_ENDPOINT` on
 `METRICS_PORT`, in a daemon thread. The two `messages_*_total`
 metrics are cumulative `Counter`s (named without the `_total` suffix, which
-prometheus_client appends); the rest are `Gauge`s. Prometheus scrapes every 15s
-so a 60s `increase()` window spans several samples.
+prometheus_client appends); the rest are `Gauge`s. Prometheus scrapes every 15s.
 
 ### `main.py` — wiring and the scheduler
 

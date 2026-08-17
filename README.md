@@ -46,8 +46,8 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 
 | Metric | Labels | Description |
 | --- | --- | --- |
-| `wmo_wis2_scgrep_messages_received_total` | `report_by`, `topic` | **Cumulative counter**, incremented each test period by the messages received from Global Brokers on the topic (the baseline). Use `increase(...[60s])` for a per-interval value. |
-| `wmo_wis2_scgrep_messages_fetched_total` | `report_by`, `centre_id`, `topic`, `protocol` | **Cumulative counter**, incremented each test period by the messages retrieved from the Global Replay service — `numberMatched` for `http`; for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). Use `increase(...[60s])` for a per-interval value. |
+| `wmo_wis2_scgrep_messages_received_total` | `report_by`, `topic` | **Cumulative counter**, incremented each test period by the messages received from Global Brokers on the topic (the baseline). Take the 60s delta (`X - X offset 60s`) for the exact per-interval count. |
+| `wmo_wis2_scgrep_messages_fetched_total` | `report_by`, `centre_id`, `topic`, `protocol` | **Cumulative counter**, incremented each test period by the messages retrieved from the Global Replay service — `numberMatched` for `http`; for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). Take the 60s delta (`X - X offset 60s`) for the exact per-interval count. |
 | `wmo_wis2_scgrep_test_aborted_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if retrieval did not complete within the test period. For `mqtt` this means the replay reported messages (`numberMatched > 0`) but delivered none over MQTT before the deadline; a `numberMatched = 0` window does **not** abort. |
 | `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Timeliness in milliseconds: `http` = time to first byte; `mqtt` = time to the first replayed message, or — when no messages are expected (`numberMatched = 0`) — the time to the process-execution HTTP response. |
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
@@ -58,10 +58,13 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 The two `messages_*_total` metrics are **cumulative counters**:
 they are *incremented* by each test period's count and never reset, so they only
 grow (until the process restarts). This leaves how they are aggregated up to the
-query — take `increase(...[60s])` to recover the per-interval count, or sum/rate
-over any longer window. The remaining metrics are point-in-time gauges. Prometheus
-scrapes every 15s (see `prometheus/prometheus.yml`) so a 60s `increase()` window
-always spans several samples.
+query — take the exact 60s delta `X - X offset 60s` to recover the per-interval
+count (what the dashboard does; `clamp_min(..., 0)` masks the drop on restart), or
+`rate`/`increase` over a longer window for a smoothed throughput. Note that
+`increase(...[60s])` extrapolates to the range edges and so returns *non-integer*
+values here, where the range ≈ the counter's step period — the `offset` delta
+avoids that. The remaining metrics are point-in-time gauges. Prometheus scrapes
+every 15s (see `prometheus/prometheus.yml`).
 
 All metrics for a given test cycle are updated **together**, at ~95% of the test
 period (when the asynchronous fetch completes): the counters are incremented and
@@ -434,8 +437,8 @@ crosshair, so a hover lines up across all of them:
 
 | # | Panel | Series | Reads as |
 | --- | --- | --- | --- |
-| 1 | **Totals** | `increase(...[60s])` of baseline, `http`, `mqtt` counters | how many messages each route saw per interval |
-| 2 | **Differences** | `increase[60s]` of `baseline − http`, `baseline − mqtt` | near zero = healthy; drifting away = the service is losing/gaining messages |
+| 1 | **Totals** | 60s counter delta (`X - X offset 60s`) of baseline, `http`, `mqtt` | how many messages each route saw per interval (exact integers) |
+| 2 | **Differences** | 60s delta of `baseline − http`, `baseline − mqtt` | near zero = healthy; drifting away = the service is losing/gaining messages |
 | 3 | **Differences (%)** | panel 2 as a percentage of the baseline | 0% = perfect match; positive % = the service returned fewer than the baseline (undefined when the baseline is zero) |
 | 4 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
 | 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = retrieval did not complete in time (`mqtt`: `numberMatched > 0` but nothing delivered over MQTT) |
