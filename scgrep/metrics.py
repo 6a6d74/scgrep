@@ -90,6 +90,13 @@ class Metrics:
             ["report_by", "centre_id", "topic", "protocol"],
             registry=self.registry,
         )
+        self.broker_status = Gauge(
+            _METRIC_PREFIX + "broker_status_flag",
+            "MQTT connection status to a Global Broker / Global Replay broker: "
+            "1 = connected, 0 = disconnected",
+            ["report_by", "url"],
+            registry=self.registry,
+        )
 
 
 class _QuietRequestHandler(WSGIRequestHandler):

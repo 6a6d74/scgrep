@@ -53,6 +53,7 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
 | `wmo_wis2_scgrep_response_invalid_numberMatched_flag` | `report_by`, `centre_id`, `topic`, `protocol` | **Synchronous (`http`) fetch only:** `1` if the number of messages actually returned (across all pages) did not equal `numberMatched`. |
 | `wmo_wis2_scgrep_http_response_code_value` | `report_by`, `centre_id`, `topic`, `protocol` | HTTP status code of the fetch's request — the synchronous Features `GET` (the **last** page when paging) or the asynchronous Processes `POST`. `200` = OK; `4xx`/`5xx` = a replay-service error (e.g. an HTML gateway page); `0` = no response (connection failure/timeout). |
+| `wmo_wis2_scgrep_broker_status_flag` | `report_by`, `url` | MQTT connection status per broker (Global Broker and Global Replay broker), one series per broker `url` (credential-free `scheme://host:port`): `1` = connected, `0` = disconnected. Lets you rule out local connectivity when isolating replay-service problems. |
 
 `protocol` is `http` (synchronous) or `mqtt` (asynchronous).
 

@@ -188,7 +188,7 @@ def main() -> int:
 
     registry = ReplayRegistry()
     handler = MessageHandler(store, registry)
-    mqtt = MqttManager(config, handler.on_message)
+    mqtt = MqttManager(config, handler.on_message, metrics)
     mqtt.start()
 
     scheduler = Scheduler(config, store, registry, metrics)

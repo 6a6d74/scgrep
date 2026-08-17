@@ -108,10 +108,25 @@ class MqttManager:
       operational Global Brokers.
     """
 
-    def __init__(self, config: Config, on_message) -> None:
+    def __init__(self, config: Config, on_message, metrics=None) -> None:
         self._config = config
         self._on_message = on_message
+        self._metrics = metrics
         self._clients: list[mqtt.Client] = []
+
+    @staticmethod
+    def _broker_url(broker: BrokerConfig) -> str:
+        """A credential-free ``scheme://host:port`` URL for use as a metric label."""
+        scheme = "mqtts" if broker.tls else "mqtt"
+        return f"{scheme}://{broker.host}:{broker.port}"
+
+    def _set_broker_status(self, broker: BrokerConfig, connected: bool) -> None:
+        if self._metrics is None:
+            return
+        self._metrics.broker_status.labels(
+            report_by=self._config.sensor_centre_id,
+            url=self._broker_url(broker),
+        ).set(1 if connected else 0)
 
     def _build_client(
         self,
@@ -147,8 +162,10 @@ class MqttManager:
                 logger.error(
                     "Failed to connect to %s: %s", broker.host, reason_code
                 )
+                self._set_broker_status(broker, False)
                 return
             logger.info("Connected to %s %s", role, broker.host)
+            self._set_broker_status(broker, True)
             # Subscribe (again) on every (re)connect so state survives drops.
             client.subscribe([(topic, 1) for topic in subscriptions])
             logger.info(
@@ -161,10 +178,14 @@ class MqttManager:
     def _make_on_disconnect(self, broker: BrokerConfig):
         def on_disconnect(client, userdata, *args):
             logger.warning("Disconnected from %s; will auto-reconnect", broker.host)
+            self._set_broker_status(broker, False)
 
         return on_disconnect
 
     def _connect(self, client: mqtt.Client, broker: BrokerConfig) -> None:
+        # Publish an initial "disconnected" reading so the series exists from
+        # start-up (on_connect flips it to 1 once the connection is up).
+        self._set_broker_status(broker, False)
         client.reconnect_delay_set(min_delay=1, max_delay=60)
         try:
             client.connect_async(broker.host, broker.port, keepalive=60)
