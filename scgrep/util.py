@@ -42,10 +42,10 @@ NOTIFICATION_COLLECTION = "wis2-notification-messages"
 #: Global Replay collection holding WIS2 Monitoring Event Messages.
 MONITORING_COLLECTION = "wis2-monitoring-event-messages"
 
-#: Topic trees served by :data:`MONITORING_COLLECTION`. Everything else (the
+#: Topic tree served by :data:`MONITORING_COLLECTION`. Everything else (the
 #: ``origin/`` and ``cache/`` data trees) is served by the notification
 #: collection.
-_MONITORING_TOPIC_PREFIXES = ("monitor/a/wis2", "replay/a/wis2")
+_MONITORING_TOPIC_PREFIXES = ("monitor/a/wis2",)
 
 
 def topic_to_collection(topic: str) -> str:
@@ -53,9 +53,8 @@ def topic_to_collection(topic: str) -> str:
 
     Global Replay services split messages into two collections; the right one is
     chosen from the topic tree. WIS2 Monitoring Event Messages live under
-    ``monitor/a/wis2`` (and the replay tree ``replay/a/wis2``); data
-    notifications, under ``origin/`` and ``cache/``, live in the notification
-    collection.
+    ``monitor/a/wis2``; data notifications, under ``origin/`` and ``cache/``,
+    live in the notification collection.
 
     >>> topic_to_collection("cache/a/wis2/uk-metoffice/#")
     'wis2-notification-messages'

@@ -721,7 +721,7 @@ from the topic tree:
 | topic tree | collection |
 | --- | --- |
 | `origin/…`, `cache/…` | `wis2-notification-messages` |
-| `monitor/a/wis2/…`, `replay/a/wis2/…` | `wis2-monitoring-event-messages` |
+| `monitor/a/wis2/…` | `wis2-monitoring-event-messages` |
 
 The synchronous fetch puts it in the request path
 (`/collections/<collection>/items`); the asynchronous fetch sends it as a

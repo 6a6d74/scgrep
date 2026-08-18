@@ -147,9 +147,9 @@ deduplicated *count* comes from Redis (above).
 
 ### `replay_tester.py` — the two fetch paths
 
-The topic tree also selects the **collection**: `monitor/a/wis2` and
-`replay/a/wis2` topics are served by `wis2-monitoring-event-messages`, everything
-else (`origin/`, `cache/`) by `wis2-notification-messages`
+The topic tree also selects the **collection**: `monitor/a/wis2` topics are
+served by `wis2-monitoring-event-messages`, everything else (`origin/`, `cache/`)
+by `wis2-notification-messages`
 (`util.topic_to_collection()`). The synchronous fetch puts it in the request path,
 the asynchronous fetch sends it as a `collection` input in the POST payload.
 
