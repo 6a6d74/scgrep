@@ -698,6 +698,29 @@ The Global Replay Feature API exposes a single collection
 (`wis2-notification-messages`) which in practice also carries WIS2 Monitoring
 Event Messages.
 
+### Asynchronous delivery cap
+
+The asynchronous (OGC API - Processes → MQTT) replay appears to be **capped at
+around 10,000 messages per execution**. Measured against
+`ca-eccc-msc-global-replay` on 2026-08-18: for a window where the synchronous
+fetch reported `numberMatched = 35,223`, the asynchronous replay delivered
+**9,999** messages and then stopped of its own accord — the last message arrived
+4.4 s after the request, far inside the deadline, so this was a cap and not a
+timeout.
+
+Consequences for interpreting the metrics:
+
+- For any window whose `numberMatched` exceeds ~10,000, expect
+  `messages_fetched{protocol="mqtt"}` to plateau near that figure while
+  `messages_fetched{protocol="http"}` reports the true total — a large
+  `baseline − mqtt` difference that is **not** message loss.
+- It is distinguishable from a genuine delivery failure by the arrival profile:
+  a cap shows a burst that ends early with a long idle tail before the deadline,
+  whereas truncation shows messages still arriving at the cutoff. Use
+  `scripts/replay_arrival_profile.py` to tell them apart.
+- High-volume centres and bulk model-output bursts are the ones affected; normal
+  per-minute traffic is far below the cap.
+
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
