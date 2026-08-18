@@ -13,6 +13,18 @@ messages for a past time window and compares what comes back, over both the
 synchronous (OGC API - Features) and asynchronous (OGC API - Processes + MQTT)
 retrieval paths.
 
+## Contents
+
+1. [How it works](#how-it-works)
+2. [Running](#running)
+3. [Configuration](#configuration)
+4. [Metrics](#metrics)
+5. [Dashboards and Prometheus](#dashboards-and-prometheus)
+6. [Logging](#logging)
+7. [Troubleshooting](#troubleshooting)
+8. [Tests](#tests)
+9. [Limitations](#limitations)
+
 ## How it works
 
 > For a component-by-component description of the codebase and the Docker stack,
@@ -37,6 +49,184 @@ retrieval paths.
 
    All fetches run in parallel so a cycle completes within one `TEST_INTERVAL`;
    each fetch is capped at 95% of `TEST_INTERVAL`.
+
+## Running
+
+### Docker
+
+The stack is self-contained: `docker compose up --build` starts a managed
+**Redis**, the **SCGRep** service, and a **Traefik** reverse proxy, all on a
+single Compose-managed bridge network named `traefik`. SCGRep waits for Redis to
+be healthy (via `depends_on`) before starting, and its configuration is set
+inline in the `environment:` block of `docker-compose.yml`:
+
+```bash
+cp traefik/dashboard-users.example traefik/dashboard-users   # required (see below)
+docker compose up --build
+```
+
+The container is named `scgrep` by default.
+
+Traefik fronts the metrics endpoint; SCGRep does not publish its port directly.
+Traefik reaches it by service name (`scgrep:8000`) over the shared network, using
+the file-provider routing in `traefik/dynamic.yml`. After `docker compose up`:
+
+- Metrics: `https://localhost/metrics` (Traefik `websecure` entrypoint on `:443`;
+  plain HTTP on `:80` is redirected to HTTPS)
+- Traefik dashboard: `https://localhost/dashboard/`, protected by HTTP basic auth.
+
+#### TLS certificate
+
+TLS is terminated by Traefik. For a **warning-free local HTTPS**, generate a
+locally-trusted certificate with [`mkcert`](https://github.com/FiloSottile/mkcert):
+
+```bash
+mkcert -install   # one-time: adds a local CA to your system trust store (needs your password)
+mkcert -cert-file traefik/certs/localhost.pem -key-file traefik/certs/localhost-key.pem \
+       localhost 127.0.0.1 ::1
+docker compose up -d traefik   # reload
+```
+
+Traefik then serves that certificate (see the `tls:` block in
+`traefik/dynamic.yml`), and `https://localhost` is trusted by any machine on
+which `mkcert -install` has been run — no `curl -k` and no browser warning. The
+certificate files live in `traefik/certs/` and are **git-ignored** (they are
+machine-specific; each user generates their own).
+
+If `traefik/certs/` is empty, Traefik falls back to its built-in **self-signed**
+certificate — HTTPS still works, but clients must skip verification (`curl -k`,
+or `insecure_skip_verify` in a Prometheus scrape). Note that `localhost` can
+never have a *publicly*-trusted certificate; for a real deployment, use a proper
+DNS name with an ACME/Let's Encrypt resolver.
+
+Before starting, create the (gitignored) credentials file from the example:
+
+```bash
+cp traefik/dashboard-users.example traefik/dashboard-users   # default admin / changeme
+# then set a real credential (recommended):
+htpasswd -nB admin > traefik/dashboard-users
+# or, without apache2-utils:
+openssl passwd -apr1 'your-password' | sed 's/^/admin:/' > traefik/dashboard-users
+```
+
+`traefik/dashboard-users` is git-ignored so credentials never land in the repo.
+
+Edit the values in the `environment:` block of `docker-compose.yml` for your
+deployment. Those values take precedence over an optional `.env` file, which may
+supply additional or overridable settings (for example `LOG_LEVEL`):
+
+```bash
+cp .env.example .env      # optional; edit as needed
+docker compose up --build
+```
+
+If you change `METRICS_PORT`, update the backend URL in `traefik/dynamic.yml` to
+match.
+
+### Running alongside existing shared services
+
+If you already have Traefik, Redis, Prometheus, and Grafana running as shared
+infrastructure, you can run SCGRep without its bundled copies of those services.
+A patch is provided that strips them from `docker-compose.yml` and adds Docker
+labels so the existing Traefik auto-discovers SCGRep via its Docker provider:
+
+```bash
+git apply docker-compose.patch
+docker compose up -d
+```
+
+The patched compose file:
+- Removes the `traefik`, `redis`, `prometheus`, and `grafana` services
+- Marks the `traefik` network as `external: true` so Compose uses the existing one
+- Adds Traefik Docker labels to the `scgrep` service for automatic routing
+- Removes the `depends_on: redis` health-gate (Redis is assumed already healthy)
+
+SCGRep's metrics will be available at the path `/scgrep/metrics` via the shared
+Traefik instance. You will also need to add a scrape job to your Prometheus config:
+
+```yaml
+- job_name: 'scgrep'
+  scheme: http
+  metrics_path: '/metrics'
+  static_configs:
+    - targets: ['scgrep:8000']
+```
+
+### Locally (development)
+
+```bash
+python -m venv .venv && . .venv/bin/activate
+pip install -r requirements-dev.txt
+export SENSOR_CENTRE_ID=... SUBSCRIPTION_TOPICS=... REDIS_URL=localhost:6379
+python -m scgrep
+```
+
+## Configuration
+
+All configuration is via environment variables (see `.env.example`).
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `SENSOR_CENTRE_ID` | *(required)* | Name of this sensor centre instance (`report_by`). |
+| `SUBSCRIPTION_TOPICS` | *(required)* | Comma-delimited topics to test, in **MQTT form** (a trailing `/#` is fine); typically 10–20, mixing notification and event topics. `+` and `*` are **rejected at start-up** — see [Topic handling](#topic-handling). |
+| `GLOBAL_BROKER_URLS` | `mqtts://everyone:everyone@globalbroker.meteo.fr:8883` | Comma-delimited Global Broker MQTT URLs. |
+| `GLOBAL_REPLAY_CENTRE_IDS` | `ca-eccc-msc-global-replay` | Comma-delimited centre-ids under test. |
+| `GLOBAL_REPLAY_URLS` | `https://wis2-grep.weather.gc.ca` | Comma-delimited Global Replay URLs (same length/order as centre-ids). |
+| `GLOBAL_REPLAY_BROKER_URLS` | `mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883` | Comma-delimited broker(s) on which async replay messages are available (one during the preoperational phase). The operational Global Brokers do not yet republish this GRep's messages, so the Compose deployment subscribes to the **GRep instance's own broker** (the default). The WIS2 test Global Broker (`gb.wis2dev.io:8883`) also carries them but, measured over 2 h on 2026-08-17, relayed only ~47% — subscribing there loses messages and causes spurious async aborts. **Leave blank** (`""`) to receive replays via the Global Brokers in `GLOBAL_BROKER_URLS` themselves — the operational case, where no separate replay broker is needed. Only supports a **single** GRep instance. |
+| `GLOBAL_REPLAY_BROKER_TLS_INSECURE` | `false` | Skip TLS verification for the replay broker. Set `true` only if its certificate lapses. |
+| `REDIS_URL` | `redis:6379` | Redis host:port (or a `redis://` URL). |
+| `METRICS_ENDPOINT` | `/metrics` | Path where metrics are served. |
+| `METRICS_PORT` | `8000` | Port for the metrics HTTP server. |
+| `TIME_LAG` | `300` | Seconds after publication before messages are expected to be replayable. |
+| `TEST_INTERVAL` | `300` | Seconds between test cycles. |
+| `REDIS_STARTUP_TIMEOUT` | `60` | Seconds to wait for Redis to become reachable on startup before giving up. |
+| `LOG_LEVEL` | `INFO` | Python log level. The detailed activity logs are at `INFO`; set `WARNING` to keep only warnings/errors, or `DEBUG` to additionally log **every** MQTT message received (see Logging). |
+| `LOG_HTTP_RESPONSE_MAX_CHARS` | `1000` | Max characters of an HTTP response body written to the log (longer bodies are truncated). |
+| `LOG_FILE` | *(unset)* | Also write logs to this file (in addition to stdout). Unset/blank = stdout only. |
+| `LOG_FILE_FLUSH_INTERVAL` | `60` | How often (seconds) buffered logs are written to `LOG_FILE`. |
+
+### Topic handling
+
+Topics are configured **once**, in MQTT form (e.g. `cache/a/wis2/uk-metoffice/#`),
+and used directly for the Global Broker subscriptions. Global Replay services,
+however, do **not** accept MQTT filters: their `topic` parameter matches whole
+topic *levels* as a prefix, with no wildcards. So SCGRep converts the configured
+topic when it builds a Global Replay request:
+
+| configured (MQTT) | sent to the Global Replay |
+| --- | --- |
+| `cache/a/wis2/uk-metoffice/#` | `cache/a/wis2/uk-metoffice` |
+| `cache/a/wis2/uk-metoffice/` | `cache/a/wis2/uk-metoffice` |
+| `cache/a/wis2/uk-metoffice` | `cache/a/wis2/uk-metoffice` |
+
+Both the trailing `/#` and any trailing `/` are stripped, for the synchronous and
+asynchronous requests alike. (Some services strip `/#` themselves on the
+asynchronous path only — sending the prefix form works everywhere.) The MQTT form
+is retained for the subscriptions, the Redis keys, the log lines and the `topic`
+metric label, so metric series are unaffected.
+
+**The topic also selects the collection.** Global Replay services hold data
+notifications and WIS2 Monitoring Event Messages in separate collections, chosen
+from the topic tree:
+
+| topic tree | collection |
+| --- | --- |
+| `origin/…`, `cache/…` | `wis2-notification-messages` |
+| `monitor/a/wis2/…` | `wis2-monitoring-event-messages` |
+
+The synchronous fetch puts it in the request path
+(`/collections/<collection>/items`); the asynchronous fetch sends it as a
+`collection` input in the POST payload. This is automatic — no configuration
+needed beyond listing the topic.
+
+**`+` and `*` are rejected at start-up.** Global Replay services support neither:
+a request containing one returns HTTP `200` with **zero** messages, which is
+indistinguishable from a genuine data gap. (At least one implementation rewrites
+`+` to `*` before querying, which does not help — measured against
+`ca-eccc-msc-global-replay` on 2026-08-18, `+` and `*` returned 0 on both the
+synchronous and asynchronous paths, in every position, including a bare `*`.)
+Failing fast is better than silently reporting nothing. Use a topic prefix,
+optionally ending `/#`, instead.
 
 ## Metrics
 
@@ -72,6 +262,250 @@ All metrics for a given test cycle are updated **together**, at ~95% of the test
 period (when the asynchronous fetch completes): the counters are incremented and
 the gauges set at that same instant, so a single Prometheus scrape sees a
 consistent set of values for the cycle rather than a mix of old and new.
+
+## Dashboards and Prometheus
+
+The Compose stack already includes **Prometheus** and **Grafana**, pre-wired:
+
+- Prometheus: `http://localhost:9090` — scrapes `scgrep:8000` (config in
+  `prometheus/prometheus.yml`).
+- Grafana: `http://localhost:3000` (default login `admin` / `admin` — change it)
+  — the Prometheus datasource **and** a pre-built SCGRep dashboard are
+  auto-provisioned from `grafana/provisioning/` (see [Dashboard](#dashboard)).
+
+Data is persisted in the `prometheus-data` and `grafana-data` volumes.
+
+### Dashboard
+
+The provisioned dashboard **SCGRep - Global Replay performance**
+(`http://localhost:3000/d/scgrep-overview`) gives an at-a-glance view of one
+Global Replay service across the tested topics.
+
+**Selectors** (top of the dashboard, applied to every panel):
+
+- **Global Replay service** — the `centre_id` label, **single-select** (pick one
+  service to inspect).
+- **Topic(s)** — the `topic` label, **multi-select** with an **All** option; the
+  list is scoped to the selected service.
+
+**Panels** — nine stacked panels sharing one time axis and a shared
+crosshair, so a hover lines up across all of them:
+
+| # | Panel | Series | Reads as |
+| --- | --- | --- | --- |
+| 1 | **Totals** | 60s counter delta (`X - X offset 60s`) of baseline, `http`, `mqtt` | how many messages each route saw per interval (exact integers) |
+| 2 | **Differences** | 60s delta of `baseline − http`, `baseline − mqtt` | near zero = healthy; drifting away = the service is losing/gaining messages |
+| 3 | **Differences (%)** | panel 2 as a percentage of the baseline | 0% = perfect match; positive % = the service returned fewer than the baseline (undefined when the baseline is zero) |
+| 4 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
+| 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = retrieval did not complete in time (`mqtt`: `numberMatched > 0` but nothing delivered over MQTT) |
+| 6 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
+| 7 | **Synchronous fetch validation** | `http` invalid-numberMatched flag (0/1) | 1 = the synchronous fetch returned a different message count than `numberMatched` |
+| 8 | **HTTP response code** | `http` and `mqtt` HTTP status code | 200 = OK (green); 4xx/5xx = replay-service error (red); 0 = no response |
+| 9 | **Broker connections** | MQTT status per broker `url` (state timeline) | green = connected, red = disconnected — rules out local connectivity |
+
+Because the baseline (`messages_received`) has no `centre_id` label, panels 1–3
+filter it by topic only; the `http`/`mqtt` series filter by both service and
+topic. See [Why the baseline and fetch counts differ](#why-the-baseline-and-fetch-counts-differ)
+for how to interpret panels 1 and 2.
+
+**Second dashboard — "SCGRep - KPI performance"** (uid `scgrep-kpi`, also
+auto-provisioned) evaluates longer-run KPI performance. It mirrors panels 1–3 but
+over a **rolling 1-hour** window using `increase(...[1h])` (at the 1h scale the
+`increase()` extrapolation is negligible, so it reads as the trailing-hour count):
+
+| # | Panel | Series | Reads as |
+| --- | --- | --- | --- |
+| 1 | **Totals over 1h** | `increase[1h]` of baseline, `http`, `mqtt` | messages each route saw in the trailing hour |
+| 2 | **Differences over 1h** | `increase[1h]` of `baseline − http`, `baseline − mqtt` | hourly shortfall/surplus per route |
+| 3 | **Worst-case deviation (% of baseline) over 1h** | per topic, `max(\|http %\|, \|mqtt %\|)` of the 1h sums | one line per topic = the larger absolute deviation of the two routes; 0% = both matched the baseline |
+
+The rest of this section is for pointing an **external** Prometheus at SCGRep.
+
+### Using an external Prometheus
+
+#### 1. Add a scrape job
+
+Edit your `prometheus.yml` and add an entry under `scrape_configs`. Choose the
+target based on where Prometheus runs relative to the SCGRep stack:
+
+```yaml
+scrape_configs:
+  # (a) Prometheus runs on the same Compose network ("traefik"): scrape the
+  #     scgrep container directly by service name (plain HTTP backend, no TLS).
+  - job_name: scgrep
+    # Metrics change once per test cycle (TEST_INTERVAL, default 300s), so a
+    # scrape interval at or below that is plenty.
+    scrape_interval: 60s
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["scgrep:8000"]
+
+  # (b) Prometheus runs elsewhere and reaches SCGRep through Traefik over HTTPS.
+  #     Traefik uses a self-signed certificate, so verification is skipped.
+  #     Use the host/IP where the stack is published (host.docker.internal from
+  #     another container on Docker Desktop, or the host's LAN address).
+  # - job_name: scgrep-via-traefik
+  #   scheme: https
+  #   tls_config:
+  #     insecure_skip_verify: true
+  #   scrape_interval: 60s
+  #   metrics_path: /metrics
+  #   static_configs:
+  #     - targets: ["host.docker.internal:443"]
+```
+
+If you run Prometheus as its own container and want it to use option (a),
+attach it to the same network so it can resolve `scgrep`:
+
+```yaml
+# in your Prometheus compose file
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+    networks:
+      - traefik
+networks:
+  traefik:
+    name: traefik
+    external: true   # created by the SCGRep stack
+```
+
+Reload Prometheus after editing (`docker restart <prometheus>`, or `POST` to
+`/-/reload` if `--web.enable-lifecycle` is set).
+
+#### 2. Confirm the target is up
+
+Open the Prometheus UI at `http://<prometheus-host>:9090` and go to
+**Status → Targets** (newer builds: **Status → Target health**). The `scgrep`
+job should be listed with **State = UP** and a recent "Last Scrape". If it shows
+`DOWN`, the error column explains why (DNS, connection refused, wrong path).
+
+#### 3. Explore the metrics
+
+Go to the **Graph** page (the expression browser):
+
+1. Click in the expression field and type `wmo_wis2_scgrep` — autocomplete lists
+   all five SCGRep metrics.
+2. Enter a metric name and press **Execute**. The **Table** tab shows the current
+   value per label set; the **Graph** tab plots it over time.
+3. Narrow down with label matchers, for example:
+   - `wmo_wis2_scgrep_fetch_delay_time{protocol="mqtt"}` — async first-message
+     latency, in milliseconds.
+   - `wmo_wis2_scgrep_fetch_delay_time{protocol="http"}` — synchronous
+     time-to-first-byte.
+   - `wmo_wis2_scgrep_test_aborted_flag == 1` — only the (topic, service,
+     protocol) combinations whose fetch timed out.
+   - `wmo_wis2_scgrep_messages_fetched_total` vs
+     `wmo_wis2_scgrep_messages_received_total` — replayed count
+     versus the broker baseline for a topic.
+
+These are **gauges** reporting the value for the most recent test cycle, so on
+the Graph tab you see one point per cycle. A few useful expressions:
+
+```promql
+# Replayed count minus the broker baseline per topic/service (negative means the
+# replay service returned fewer messages than were seen on the brokers).
+wmo_wis2_scgrep_messages_fetched_total{protocol="http"}
+  - on(report_by, topic) group_left
+    wmo_wis2_scgrep_messages_received_total
+
+# Max async fetch delay across all topics for each Global Replay service.
+max by (centre_id) (wmo_wis2_scgrep_fetch_delay_time{protocol="mqtt"})
+
+# Count of aborted tests in the latest cycle.
+sum(wmo_wis2_scgrep_test_aborted_flag)
+```
+
+For dashboards and alerting, point Grafana at the same Prometheus data source, or
+add Prometheus alert rules on `wmo_wis2_scgrep_test_aborted_flag` /
+`wmo_wis2_scgrep_response_invalid_format_flag`.
+
+## Logging
+
+Logs go to stdout, each line timestamped (`docker compose logs -f scgrep` to
+follow). The detailed activity below is logged at `INFO` — **on by default** —
+so it is always captured unless explicitly turned off with `LOG_LEVEL=WARNING`
+(which keeps only the warnings/errors):
+
+- **Broker connections** — each Global Broker and replay broker connection, and
+  the exact topics subscribed on it.
+- **Test period start/finish** — the window each period covers.
+- **Unique broker messages** — every newly-seen message from the Global Brokers
+  (`topic`, `id`, `time`); duplicates that are discarded are not logged.
+- **Replay messages** — one line per message returned by a Global Replay service
+  (`centre_id`, `topic`, `id`, `time`), tagged `Replay message (asynchronous)`
+  for MQTT-delivered messages (duplicates from other replay brokers are not
+  logged) and `Replay message (synchronous)` for every Feature in a synchronous
+  response.
+- **Requests** to a Global Replay service — `centre_id`, type (synchronous /
+  asynchronous), topic, datetime interval, and the full request (the POST payload
+  for asynchronous requests; each page of a synchronous response is a separate
+  logged request; HTTP headers are not logged).
+- **Responses** — `centre_id`, type, topic, and the response body truncated at
+  `LOG_HTTP_RESPONSE_MAX_CHARS`.
+- **`numberMatched`** extracted from each synchronous response's first page.
+- **Per-result summary** — one line per (service, topic): baseline, fetched,
+  fetch delay, and the aborted / invalid-format / invalid-numberMatched flags.
+
+Emitted at `WARNING`/`ERROR` (always shown): **aborted tests** (synchronous
+timeout or no replay within the deadline), **malformed / invalid responses**,
+failed process executions, broker disconnects, and a **`numberMatched` mismatch**
+(the synchronous fetch returned a different number of messages than
+`numberMatched`).
+
+With **`LOG_LEVEL=DEBUG`** an additional line is emitted for **every** MQTT
+message received (before deduplication), attributing it to its source broker and
+flagging discarded duplicates — useful for isolating which broker delivers (or
+fails to deliver) messages:
+
+```
+MQTT message received: broker=mqtts://gb.wis2dev.io:8883 topic=replay/a/wis2/… id=… time=… Duplicate?=false
+```
+
+This is **very verbose** at high message rates; use it for diagnosis, not steady
+state.
+
+Timestamps are **UTC**.
+
+### Writing logs to a file
+
+Set `LOG_FILE` to also write logs to a file (in addition to stdout). Records are
+buffered and written every `LOG_FILE_FLUSH_INTERVAL` seconds (default 60) —
+so the file updates in batches, not live (use stdout for a live tail); errors are
+written immediately. A `WatchedFileHandler` reopens the file if it is replaced,
+so the file can be trimmed underneath a running app.
+
+In the Compose deployment this is enabled and points at
+`/var/log/scgrep/scgrep.log`, mounted to `./logs/scgrep.log` on the host.
+
+### Purging old log entries
+
+`scripts/purge_logs.py` removes log entries older than a cutoff from a log file,
+in place (it rewrites the file atomically, keeping only entries at/after the
+cutoff; entries are matched by their leading UTC timestamp):
+
+```bash
+python scripts/purge_logs.py ./logs/scgrep.log --max-age-hours 24
+```
+
+The Compose stack runs this **hourly** as a small `log-purge` service (it reuses
+the SCGRep image for Python, runs the script from the mounted `./scripts`, and
+keeps `PURGE_LOG_MAX_AGE_HOURS` hours — default 24). To run it on a schedule
+outside Docker instead, point cron at the same script, e.g.:
+
+```cron
+0 * * * * /usr/bin/python3 /path/to/scripts/purge_logs.py /path/to/logs/scgrep.log --max-age-hours 24
+```
+
+## Troubleshooting
+
+How to read a difference between the baseline and what a Global Replay
+service returns, how to confirm whether it is real, and the service
+behaviours that produce misleading numbers.
 
 ### Why the baseline and fetch counts differ
 
@@ -124,7 +558,8 @@ the tool is to watch **how large** the difference is.
 - **`response_invalid_format_flag` set** — the response was malformed, so its
   count is unreliable regardless of the number.
 
-The Grafana **Differences** panel (below) plots `baseline − fetched` directly, so
+The Grafana **Differences** panel (see [Dashboard](#dashboard)) plots
+`baseline − fetched` directly, so
 these gaps are easy to spot at a glance: a line hovering near zero is healthy;
 a line trending away from zero is a service that is losing or gaining messages.
 
@@ -300,376 +735,28 @@ the same timestamps and then stops. (Isolated `mqtt` aborts with `invalid_format
 0`, by contrast, are just single-window delivery-latency misses — the first replay
 message arrived after the 95% deadline — not an outage.)
 
-## Configuration
-
-All configuration is via environment variables (see `.env.example`).
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `SENSOR_CENTRE_ID` | *(required)* | Name of this sensor centre instance (`report_by`). |
-| `SUBSCRIPTION_TOPICS` | *(required)* | Comma-delimited topics to test, in **MQTT form** (a trailing `/#` is fine); typically 10–20, mixing notification and event topics. `+` and `*` are **rejected at start-up** — see [Topic handling](#topic-handling). |
-| `GLOBAL_BROKER_URLS` | `mqtts://everyone:everyone@globalbroker.meteo.fr:8883` | Comma-delimited Global Broker MQTT URLs. |
-| `GLOBAL_REPLAY_CENTRE_IDS` | `ca-eccc-msc-global-replay` | Comma-delimited centre-ids under test. |
-| `GLOBAL_REPLAY_URLS` | `https://wis2-grep.weather.gc.ca` | Comma-delimited Global Replay URLs (same length/order as centre-ids). |
-| `GLOBAL_REPLAY_BROKER_URLS` | `mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883` | Comma-delimited broker(s) on which async replay messages are available (one during the preoperational phase). The operational Global Brokers do not yet republish this GRep's messages, so the Compose deployment subscribes to the **GRep instance's own broker** (the default). The WIS2 test Global Broker (`gb.wis2dev.io:8883`) also carries them but, measured over 2 h on 2026-08-17, relayed only ~47% — subscribing there loses messages and causes spurious async aborts. **Leave blank** (`""`) to receive replays via the Global Brokers in `GLOBAL_BROKER_URLS` themselves — the operational case, where no separate replay broker is needed. Only supports a **single** GRep instance. |
-| `GLOBAL_REPLAY_BROKER_TLS_INSECURE` | `false` | Skip TLS verification for the replay broker. Set `true` only if its certificate lapses. |
-| `REDIS_URL` | `redis:6379` | Redis host:port (or a `redis://` URL). |
-| `METRICS_ENDPOINT` | `/metrics` | Path where metrics are served. |
-| `METRICS_PORT` | `8000` | Port for the metrics HTTP server. |
-| `TIME_LAG` | `300` | Seconds after publication before messages are expected to be replayable. |
-| `TEST_INTERVAL` | `300` | Seconds between test cycles. |
-| `REDIS_STARTUP_TIMEOUT` | `60` | Seconds to wait for Redis to become reachable on startup before giving up. |
-| `LOG_LEVEL` | `INFO` | Python log level. The detailed activity logs are at `INFO`; set `WARNING` to keep only warnings/errors, or `DEBUG` to additionally log **every** MQTT message received (see Logging). |
-| `LOG_HTTP_RESPONSE_MAX_CHARS` | `1000` | Max characters of an HTTP response body written to the log (longer bodies are truncated). |
-| `LOG_FILE` | *(unset)* | Also write logs to this file (in addition to stdout). Unset/blank = stdout only. |
-| `LOG_FILE_FLUSH_INTERVAL` | `60` | How often (seconds) buffered logs are written to `LOG_FILE`. |
-
-## Logging
-
-Logs go to stdout, each line timestamped (`docker compose logs -f scgrep` to
-follow). The detailed activity below is logged at `INFO` — **on by default** —
-so it is always captured unless explicitly turned off with `LOG_LEVEL=WARNING`
-(which keeps only the warnings/errors):
-
-- **Broker connections** — each Global Broker and replay broker connection, and
-  the exact topics subscribed on it.
-- **Test period start/finish** — the window each period covers.
-- **Unique broker messages** — every newly-seen message from the Global Brokers
-  (`topic`, `id`, `time`); duplicates that are discarded are not logged.
-- **Replay messages** — one line per message returned by a Global Replay service
-  (`centre_id`, `topic`, `id`, `time`), tagged `Replay message (asynchronous)`
-  for MQTT-delivered messages (duplicates from other replay brokers are not
-  logged) and `Replay message (synchronous)` for every Feature in a synchronous
-  response.
-- **Requests** to a Global Replay service — `centre_id`, type (synchronous /
-  asynchronous), topic, datetime interval, and the full request (the POST payload
-  for asynchronous requests; each page of a synchronous response is a separate
-  logged request; HTTP headers are not logged).
-- **Responses** — `centre_id`, type, topic, and the response body truncated at
-  `LOG_HTTP_RESPONSE_MAX_CHARS`.
-- **`numberMatched`** extracted from each synchronous response's first page.
-- **Per-result summary** — one line per (service, topic): baseline, fetched,
-  fetch delay, and the aborted / invalid-format / invalid-numberMatched flags.
-
-Emitted at `WARNING`/`ERROR` (always shown): **aborted tests** (synchronous
-timeout or no replay within the deadline), **malformed / invalid responses**,
-failed process executions, broker disconnects, and a **`numberMatched` mismatch**
-(the synchronous fetch returned a different number of messages than
-`numberMatched`).
-
-With **`LOG_LEVEL=DEBUG`** an additional line is emitted for **every** MQTT
-message received (before deduplication), attributing it to its source broker and
-flagging discarded duplicates — useful for isolating which broker delivers (or
-fails to deliver) messages:
-
-```
-MQTT message received: broker=mqtts://gb.wis2dev.io:8883 topic=replay/a/wis2/… id=… time=… Duplicate?=false
-```
-
-This is **very verbose** at high message rates; use it for diagnosis, not steady
-state.
-
-Timestamps are **UTC**.
-
-### Writing logs to a file
-
-Set `LOG_FILE` to also write logs to a file (in addition to stdout). Records are
-buffered and written every `LOG_FILE_FLUSH_INTERVAL` seconds (default 60) —
-so the file updates in batches, not live (use stdout for a live tail); errors are
-written immediately. A `WatchedFileHandler` reopens the file if it is replaced,
-so the file can be trimmed underneath a running app.
-
-In the Compose deployment this is enabled and points at
-`/var/log/scgrep/scgrep.log`, mounted to `./logs/scgrep.log` on the host.
-
-### Purging old log entries
-
-`scripts/purge_logs.py` removes log entries older than a cutoff from a log file,
-in place (it rewrites the file atomically, keeping only entries at/after the
-cutoff; entries are matched by their leading UTC timestamp):
-
-```bash
-python scripts/purge_logs.py ./logs/scgrep.log --max-age-hours 24
-```
-
-The Compose stack runs this **hourly** as a small `log-purge` service (it reuses
-the SCGRep image for Python, runs the script from the mounted `./scripts`, and
-keeps `PURGE_LOG_MAX_AGE_HOURS` hours — default 24). To run it on a schedule
-outside Docker instead, point cron at the same script, e.g.:
-
-```cron
-0 * * * * /usr/bin/python3 /path/to/scripts/purge_logs.py /path/to/logs/scgrep.log --max-age-hours 24
-```
-
-## Running
-
-### Docker
-
-The stack is self-contained: `docker compose up --build` starts a managed
-**Redis**, the **SCGRep** service, and a **Traefik** reverse proxy, all on a
-single Compose-managed bridge network named `traefik`. SCGRep waits for Redis to
-be healthy (via `depends_on`) before starting, and its configuration is set
-inline in the `environment:` block of `docker-compose.yml`:
-
-```bash
-cp traefik/dashboard-users.example traefik/dashboard-users   # required (see below)
-docker compose up --build
-```
-
-The container is named `scgrep` by default.
-
-Traefik fronts the metrics endpoint; SCGRep does not publish its port directly.
-Traefik reaches it by service name (`scgrep:8000`) over the shared network, using
-the file-provider routing in `traefik/dynamic.yml`. After `docker compose up`:
-
-- Metrics: `https://localhost/metrics` (Traefik `websecure` entrypoint on `:443`;
-  plain HTTP on `:80` is redirected to HTTPS)
-- Traefik dashboard: `https://localhost/dashboard/`, protected by HTTP basic auth.
-
-#### TLS certificate
-
-TLS is terminated by Traefik. For a **warning-free local HTTPS**, generate a
-locally-trusted certificate with [`mkcert`](https://github.com/FiloSottile/mkcert):
-
-```bash
-mkcert -install   # one-time: adds a local CA to your system trust store (needs your password)
-mkcert -cert-file traefik/certs/localhost.pem -key-file traefik/certs/localhost-key.pem \
-       localhost 127.0.0.1 ::1
-docker compose up -d traefik   # reload
-```
-
-Traefik then serves that certificate (see the `tls:` block in
-`traefik/dynamic.yml`), and `https://localhost` is trusted by any machine on
-which `mkcert -install` has been run — no `curl -k` and no browser warning. The
-certificate files live in `traefik/certs/` and are **git-ignored** (they are
-machine-specific; each user generates their own).
-
-If `traefik/certs/` is empty, Traefik falls back to its built-in **self-signed**
-certificate — HTTPS still works, but clients must skip verification (`curl -k`,
-or `insecure_skip_verify` in a Prometheus scrape). Note that `localhost` can
-never have a *publicly*-trusted certificate; for a real deployment, use a proper
-DNS name with an ACME/Let's Encrypt resolver.
-
-Before starting, create the (gitignored) credentials file from the example:
-
-```bash
-cp traefik/dashboard-users.example traefik/dashboard-users   # default admin / changeme
-# then set a real credential (recommended):
-htpasswd -nB admin > traefik/dashboard-users
-# or, without apache2-utils:
-openssl passwd -apr1 'your-password' | sed 's/^/admin:/' > traefik/dashboard-users
-```
-
-`traefik/dashboard-users` is git-ignored so credentials never land in the repo.
-
-Edit the values in the `environment:` block of `docker-compose.yml` for your
-deployment. Those values take precedence over an optional `.env` file, which may
-supply additional or overridable settings (for example `LOG_LEVEL`):
-
-```bash
-cp .env.example .env      # optional; edit as needed
-docker compose up --build
-```
-
-If you change `METRICS_PORT`, update the backend URL in `traefik/dynamic.yml` to
-match.
-
-### Running alongside existing shared services
-
-If you already have Traefik, Redis, Prometheus, and Grafana running as shared
-infrastructure, you can run SCGRep without its bundled copies of those services.
-A patch is provided that strips them from `docker-compose.yml` and adds Docker
-labels so the existing Traefik auto-discovers SCGRep via its Docker provider:
-
-```bash
-git apply docker-compose.patch
-docker compose up -d
-```
-
-The patched compose file:
-- Removes the `traefik`, `redis`, `prometheus`, and `grafana` services
-- Marks the `traefik` network as `external: true` so Compose uses the existing one
-- Adds Traefik Docker labels to the `scgrep` service for automatic routing
-- Removes the `depends_on: redis` health-gate (Redis is assumed already healthy)
-
-SCGRep's metrics will be available at the path `/scgrep/metrics` via the shared
-Traefik instance. You will also need to add a scrape job to your Prometheus config:
-
-```yaml
-- job_name: 'scgrep'
-  scheme: http
-  metrics_path: '/metrics'
-  static_configs:
-    - targets: ['scgrep:8000']
-```
-
-### Locally (development)
-
-```bash
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements-dev.txt
-export SENSOR_CENTRE_ID=... SUBSCRIPTION_TOPICS=... REDIS_URL=localhost:6379
-python -m scgrep
-```
-
-## Scraping with Prometheus
-
-The Compose stack already includes **Prometheus** and **Grafana**, pre-wired:
-
-- Prometheus: `http://localhost:9090` — scrapes `scgrep:8000` (config in
-  `prometheus/prometheus.yml`).
-- Grafana: `http://localhost:3000` (default login `admin` / `admin` — change it)
-  — the Prometheus datasource **and** a pre-built SCGRep dashboard are
-  auto-provisioned from `grafana/provisioning/` (see [Dashboard](#dashboard)).
-
-Data is persisted in the `prometheus-data` and `grafana-data` volumes.
-
-### Dashboard
-
-The provisioned dashboard **SCGRep - Global Replay performance**
-(`http://localhost:3000/d/scgrep-overview`) gives an at-a-glance view of one
-Global Replay service across the tested topics.
-
-**Selectors** (top of the dashboard, applied to every panel):
-
-- **Global Replay service** — the `centre_id` label, **single-select** (pick one
-  service to inspect).
-- **Topic(s)** — the `topic` label, **multi-select** with an **All** option; the
-  list is scoped to the selected service.
-
-**Panels** — nine stacked panels sharing one time axis and a shared
-crosshair, so a hover lines up across all of them:
-
-| # | Panel | Series | Reads as |
-| --- | --- | --- | --- |
-| 1 | **Totals** | 60s counter delta (`X - X offset 60s`) of baseline, `http`, `mqtt` | how many messages each route saw per interval (exact integers) |
-| 2 | **Differences** | 60s delta of `baseline − http`, `baseline − mqtt` | near zero = healthy; drifting away = the service is losing/gaining messages |
-| 3 | **Differences (%)** | panel 2 as a percentage of the baseline | 0% = perfect match; positive % = the service returned fewer than the baseline (undefined when the baseline is zero) |
-| 4 | **Timeliness** | `http` and `mqtt` fetch delay (ms) | how quickly the service responds / first replay arrives |
-| 5 | **Test status** | `http` and `mqtt` aborted flag (0/1) | 1 = retrieval did not complete in time (`mqtt`: `numberMatched > 0` but nothing delivered over MQTT) |
-| 6 | **Format validation** | `http` and `mqtt` invalid-format flag (0/1) | 1 = a malformed response |
-| 7 | **Synchronous fetch validation** | `http` invalid-numberMatched flag (0/1) | 1 = the synchronous fetch returned a different message count than `numberMatched` |
-| 8 | **HTTP response code** | `http` and `mqtt` HTTP status code | 200 = OK (green); 4xx/5xx = replay-service error (red); 0 = no response |
-| 9 | **Broker connections** | MQTT status per broker `url` (state timeline) | green = connected, red = disconnected — rules out local connectivity |
-
-Because the baseline (`messages_received`) has no `centre_id` label, panels 1–3
-filter it by topic only; the `http`/`mqtt` series filter by both service and
-topic. See [Why the baseline and fetch counts differ](#why-the-baseline-and-fetch-counts-differ)
-for how to interpret panels 1 and 2.
-
-**Second dashboard — "SCGRep - KPI performance"** (uid `scgrep-kpi`, also
-auto-provisioned) evaluates longer-run KPI performance. It mirrors panels 1–3 but
-over a **rolling 1-hour** window using `increase(...[1h])` (at the 1h scale the
-`increase()` extrapolation is negligible, so it reads as the trailing-hour count):
-
-| # | Panel | Series | Reads as |
-| --- | --- | --- | --- |
-| 1 | **Totals over 1h** | `increase[1h]` of baseline, `http`, `mqtt` | messages each route saw in the trailing hour |
-| 2 | **Differences over 1h** | `increase[1h]` of `baseline − http`, `baseline − mqtt` | hourly shortfall/surplus per route |
-| 3 | **Worst-case deviation (% of baseline) over 1h** | per topic, `max(\|http %\|, \|mqtt %\|)` of the 1h sums | one line per topic = the larger absolute deviation of the two routes; 0% = both matched the baseline |
-
-The rest of this section is for pointing an **external** Prometheus at SCGRep.
-
-### 1. Add a scrape job
-
-Edit your `prometheus.yml` and add an entry under `scrape_configs`. Choose the
-target based on where Prometheus runs relative to the SCGRep stack:
-
-```yaml
-scrape_configs:
-  # (a) Prometheus runs on the same Compose network ("traefik"): scrape the
-  #     scgrep container directly by service name (plain HTTP backend, no TLS).
-  - job_name: scgrep
-    # Metrics change once per test cycle (TEST_INTERVAL, default 300s), so a
-    # scrape interval at or below that is plenty.
-    scrape_interval: 60s
-    metrics_path: /metrics
-    static_configs:
-      - targets: ["scgrep:8000"]
-
-  # (b) Prometheus runs elsewhere and reaches SCGRep through Traefik over HTTPS.
-  #     Traefik uses a self-signed certificate, so verification is skipped.
-  #     Use the host/IP where the stack is published (host.docker.internal from
-  #     another container on Docker Desktop, or the host's LAN address).
-  # - job_name: scgrep-via-traefik
-  #   scheme: https
-  #   tls_config:
-  #     insecure_skip_verify: true
-  #   scrape_interval: 60s
-  #   metrics_path: /metrics
-  #   static_configs:
-  #     - targets: ["host.docker.internal:443"]
-```
-
-If you run Prometheus as its own container and want it to use option (a),
-attach it to the same network so it can resolve `scgrep`:
-
-```yaml
-# in your Prometheus compose file
-services:
-  prometheus:
-    image: prom/prometheus:latest
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    ports:
-      - "9090:9090"
-    networks:
-      - traefik
-networks:
-  traefik:
-    name: traefik
-    external: true   # created by the SCGRep stack
-```
-
-Reload Prometheus after editing (`docker restart <prometheus>`, or `POST` to
-`/-/reload` if `--web.enable-lifecycle` is set).
-
-### 2. Confirm the target is up
-
-Open the Prometheus UI at `http://<prometheus-host>:9090` and go to
-**Status → Targets** (newer builds: **Status → Target health**). The `scgrep`
-job should be listed with **State = UP** and a recent "Last Scrape". If it shows
-`DOWN`, the error column explains why (DNS, connection refused, wrong path).
-
-### 3. Explore the metrics
-
-Go to the **Graph** page (the expression browser):
-
-1. Click in the expression field and type `wmo_wis2_scgrep` — autocomplete lists
-   all five SCGRep metrics.
-2. Enter a metric name and press **Execute**. The **Table** tab shows the current
-   value per label set; the **Graph** tab plots it over time.
-3. Narrow down with label matchers, for example:
-   - `wmo_wis2_scgrep_fetch_delay_time{protocol="mqtt"}` — async first-message
-     latency, in milliseconds.
-   - `wmo_wis2_scgrep_fetch_delay_time{protocol="http"}` — synchronous
-     time-to-first-byte.
-   - `wmo_wis2_scgrep_test_aborted_flag == 1` — only the (topic, service,
-     protocol) combinations whose fetch timed out.
-   - `wmo_wis2_scgrep_messages_fetched_total` vs
-     `wmo_wis2_scgrep_messages_received_total` — replayed count
-     versus the broker baseline for a topic.
-
-These are **gauges** reporting the value for the most recent test cycle, so on
-the Graph tab you see one point per cycle. A few useful expressions:
-
-```promql
-# Replayed count minus the broker baseline per topic/service (negative means the
-# replay service returned fewer messages than were seen on the brokers).
-wmo_wis2_scgrep_messages_fetched_total{protocol="http"}
-  - on(report_by, topic) group_left
-    wmo_wis2_scgrep_messages_received_total
-
-# Max async fetch delay across all topics for each Global Replay service.
-max by (centre_id) (wmo_wis2_scgrep_fetch_delay_time{protocol="mqtt"})
-
-# Count of aborted tests in the latest cycle.
-sum(wmo_wis2_scgrep_test_aborted_flag)
-```
-
-For dashboards and alerting, point Grafana at the same Prometheus data source, or
-add Prometheus alert rules on `wmo_wis2_scgrep_test_aborted_flag` /
-`wmo_wis2_scgrep_response_invalid_format_flag`.
+### Asynchronous delivery cap
+
+The asynchronous (OGC API - Processes → MQTT) replay appears to be **capped at
+around 10,000 messages per execution**. Measured against
+`ca-eccc-msc-global-replay` on 2026-08-18: for a window where the synchronous
+fetch reported `numberMatched = 35,223`, the asynchronous replay delivered
+**9,999** messages and then stopped of its own accord — the last message arrived
+4.4 s after the request, far inside the deadline, so this was a cap and not a
+timeout.
+
+Consequences for interpreting the metrics:
+
+- For any window whose `numberMatched` exceeds ~10,000, expect
+  `messages_fetched{protocol="mqtt"}` to plateau near that figure while
+  `messages_fetched{protocol="http"}` reports the true total — a large
+  `baseline − mqtt` difference that is **not** message loss.
+- It is distinguishable from a genuine delivery failure by the arrival profile:
+  a cap shows a burst that ends early with a long idle tail before the deadline,
+  whereas truncation shows messages still arriving at the cutoff. Use
+  `scripts/replay_arrival_profile.py` to tell them apart.
+- High-volume centres and bulk model-output bursts are the ones affected; normal
+  per-minute traffic is far below the cap.
 
 ## Tests
 
@@ -693,72 +780,6 @@ The `messages_fetched` metric for the synchronous (`http`) fetch reports
 counts the messages actually returned, records each in Redis, and flags any
 mismatch with `numberMatched` via
 `wmo_wis2_scgrep_response_invalid_numberMatched_flag`.
-
-### Topic handling
-
-Topics are configured **once**, in MQTT form (e.g. `cache/a/wis2/uk-metoffice/#`),
-and used directly for the Global Broker subscriptions. Global Replay services,
-however, do **not** accept MQTT filters: their `topic` parameter matches whole
-topic *levels* as a prefix, with no wildcards. So SCGRep converts the configured
-topic when it builds a Global Replay request:
-
-| configured (MQTT) | sent to the Global Replay |
-| --- | --- |
-| `cache/a/wis2/uk-metoffice/#` | `cache/a/wis2/uk-metoffice` |
-| `cache/a/wis2/uk-metoffice/` | `cache/a/wis2/uk-metoffice` |
-| `cache/a/wis2/uk-metoffice` | `cache/a/wis2/uk-metoffice` |
-
-Both the trailing `/#` and any trailing `/` are stripped, for the synchronous and
-asynchronous requests alike. (Some services strip `/#` themselves on the
-asynchronous path only — sending the prefix form works everywhere.) The MQTT form
-is retained for the subscriptions, the Redis keys, the log lines and the `topic`
-metric label, so metric series are unaffected.
-
-**The topic also selects the collection.** Global Replay services hold data
-notifications and WIS2 Monitoring Event Messages in separate collections, chosen
-from the topic tree:
-
-| topic tree | collection |
-| --- | --- |
-| `origin/…`, `cache/…` | `wis2-notification-messages` |
-| `monitor/a/wis2/…` | `wis2-monitoring-event-messages` |
-
-The synchronous fetch puts it in the request path
-(`/collections/<collection>/items`); the asynchronous fetch sends it as a
-`collection` input in the POST payload. This is automatic — no configuration
-needed beyond listing the topic.
-
-**`+` and `*` are rejected at start-up.** Global Replay services support neither:
-a request containing one returns HTTP `200` with **zero** messages, which is
-indistinguishable from a genuine data gap. (At least one implementation rewrites
-`+` to `*` before querying, which does not help — measured against
-`ca-eccc-msc-global-replay` on 2026-08-18, `+` and `*` returned 0 on both the
-synchronous and asynchronous paths, in every position, including a bare `*`.)
-Failing fast is better than silently reporting nothing. Use a topic prefix,
-optionally ending `/#`, instead.
-
-### Asynchronous delivery cap
-
-The asynchronous (OGC API - Processes → MQTT) replay appears to be **capped at
-around 10,000 messages per execution**. Measured against
-`ca-eccc-msc-global-replay` on 2026-08-18: for a window where the synchronous
-fetch reported `numberMatched = 35,223`, the asynchronous replay delivered
-**9,999** messages and then stopped of its own accord — the last message arrived
-4.4 s after the request, far inside the deadline, so this was a cap and not a
-timeout.
-
-Consequences for interpreting the metrics:
-
-- For any window whose `numberMatched` exceeds ~10,000, expect
-  `messages_fetched{protocol="mqtt"}` to plateau near that figure while
-  `messages_fetched{protocol="http"}` reports the true total — a large
-  `baseline − mqtt` difference that is **not** message loss.
-- It is distinguishable from a genuine delivery failure by the arrival profile:
-  a cap shows a burst that ends early with a long idle tail before the deadline,
-  whereas truncation shows messages still arriving at the cutoff. Use
-  `scripts/replay_arrival_profile.py` to tell them apart.
-- High-volume centres and bulk model-output bursts are the ones affected; normal
-  per-minute traffic is far below the cap.
 
 ## License
 
