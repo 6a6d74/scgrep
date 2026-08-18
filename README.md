@@ -244,6 +244,7 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 | `wmo_wis2_scgrep_response_invalid_numberMatched_flag` | `report_by`, `centre_id`, `topic`, `protocol` | **Synchronous (`http`) fetch only:** `1` if the number of messages actually returned (across all pages) did not equal `numberMatched`. |
 | `wmo_wis2_scgrep_http_response_code_value` | `report_by`, `centre_id`, `topic`, `protocol` | HTTP status code of the fetch's request — the synchronous Features `GET` (the **last** page when paging) or the asynchronous Processes `POST`. `200` = OK; `4xx`/`5xx` = a replay-service error (e.g. an HTML gateway page); `0` = no response (connection failure/timeout). |
 | `wmo_wis2_scgrep_broker_status_flag` | `report_by`, `url` | MQTT connection status per broker (Global Broker and Global Replay broker), one series per broker `url` (credential-free `scheme://host:port`): `1` = connected, `0` = disconnected. Lets you rule out local connectivity when isolating replay-service problems. |
+| `wmo_wis2_scgrep_broker_last_message_age_seconds` | `report_by`, `url` | Seconds since the last MQTT message arrived from that broker (evaluated at scrape time; measured from connection until the first message). Pair it with `broker_status_flag`: **status `1` with a climbing age = a silently stalled connection** — connected, but delivering nothing, so baselines for those windows read low or zero. |
 
 `protocol` is `http` (synchronous) or `mqtt` (asynchronous).
 
@@ -288,7 +289,7 @@ Global Replay service across the tested topics.
 - **Topic(s)** — the `topic` label, **multi-select** with an **All** option; the
   list is scoped to the selected service.
 
-**Panels** — nine stacked panels sharing one time axis and a shared
+**Panels** — ten stacked panels sharing one time axis and a shared
 crosshair, so a hover lines up across all of them:
 
 | # | Panel | Series | Reads as |
@@ -302,6 +303,7 @@ crosshair, so a hover lines up across all of them:
 | 7 | **Synchronous fetch validation** | `http` invalid-numberMatched flag (0/1) | 1 = the synchronous fetch returned a different message count than `numberMatched` |
 | 8 | **HTTP response code** | `http` and `mqtt` HTTP status code | 200 = OK (green); 4xx/5xx = replay-service error (red); 0 = no response |
 | 9 | **Broker connections** | MQTT status per broker `url` (state timeline) | green = connected, red = disconnected — rules out local connectivity |
+| 10 | **Broker message age** | seconds since the last message per broker `url` | low sawtooth = healthy; climbing while panel 9 is green = a silently stalled connection |
 
 Because the baseline (`messages_received`) has no `centre_id` label, panels 1–3
 filter it by topic only; the `http`/`mqtt` series filter by both service and

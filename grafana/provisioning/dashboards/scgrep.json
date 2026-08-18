@@ -3,7 +3,7 @@
   "title": "SCGRep - Global Replay performance",
   "tags": ["scgrep", "wis2"],
   "schemaVersion": 39,
-  "version": 10,
+  "version": 11,
   "editable": true,
   "graphTooltip": 1,
   "refresh": "30s",
@@ -271,6 +271,32 @@
       },
       "targets": [
         { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_broker_status_flag", "legendFormat": "{{url}}" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "10. Broker message age",
+      "description": "Seconds since the last MQTT message arrived from each broker. A low sawtooth is healthy (it resets on every message). A line climbing steadily while panel 9 still shows 'connected' means the connection is silently delivering nothing — baselines for those windows will read low or zero.",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "interval": "60s",
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 54 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "decimals": 0,
+          "color": { "mode": "thresholds" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 120 }, { "color": "red", "value": 300 } ] },
+          "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10, "showPoints": "auto", "spanNulls": false, "thresholdsStyle": { "mode": "dashed" } }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["lastNotNull", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        { "refId": "A", "datasource": { "type": "prometheus", "uid": "prometheus" }, "expr": "wmo_wis2_scgrep_broker_last_message_age_seconds", "legendFormat": "{{url}}" }
       ]
     }
   ]

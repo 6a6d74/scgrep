@@ -1,5 +1,6 @@
 import json
 import logging
+import time
 from unittest.mock import Mock
 
 import fakeredis
@@ -60,6 +61,50 @@ def test_on_disconnect_sets_status_0():
     assert _status(metrics) == 1
     mgr._make_on_disconnect(BROKER)(Mock(), None)
     assert _status(metrics) == 0
+
+
+def _age(metrics, url=URL):
+    # set_function() values are produced at collection time, so read the sample
+    # from the registry rather than the child's stored value.
+    return metrics.registry.get_sample_value(
+        "wmo_wis2_scgrep_broker_last_message_age_seconds",
+        {"report_by": REPORT_BY, "url": url},
+    )
+
+
+def test_message_age_starts_at_connection_and_climbs_while_silent():
+    """A broker that has delivered nothing yet reports an age measured from
+    connection, and that age keeps growing at scrape time (no ticker needed)."""
+    mgr, metrics = _mgr()
+    mgr._track_message_age(BROKER)
+    first = _age(metrics)
+    assert first >= 0
+    time.sleep(0.05)
+    assert _age(metrics) > first          # evaluated at scrape time
+
+
+def test_message_age_resets_when_a_message_arrives():
+    mgr, metrics = _mgr()
+    mgr._track_message_age(BROKER)
+    mgr._last_message_at[URL] = time.time() - 30      # pretend 30s of silence
+    assert _age(metrics) >= 30
+    # A message arriving resets the clock, and is still passed to the handler.
+    on_message = mgr._track_messages(URL)
+    on_message(None, URL, _Msg("cache/a/wis2/x/y", _payload()))
+    assert _age(metrics) < 1
+    mgr._on_message.assert_called_once()
+
+
+def test_message_age_tracked_per_broker():
+    mgr, metrics = _mgr()
+    other = BrokerConfig.from_url("mqtts://wis2-grep.weather.gc.ca:8883")
+    other_url = "mqtts://wis2-grep.weather.gc.ca:8883"
+    mgr._track_message_age(BROKER)
+    mgr._track_message_age(other)
+    mgr._last_message_at[URL] = time.time() - 60      # one broker silent
+    mgr._track_messages(other_url)(None, other_url, _Msg("cache/a/wis2/x/y", _payload()))
+    assert _age(metrics) >= 60                        # silent broker
+    assert _age(metrics, other_url) < 1                # active broker
 
 
 def test_status_helper_noop_without_metrics():

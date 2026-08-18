@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import ssl
+import time
 
 import paho.mqtt.client as mqtt
 from paho.mqtt.client import CallbackAPIVersion
@@ -138,6 +139,33 @@ class MqttManager:
         self._on_message = on_message
         self._metrics = metrics
         self._clients: list[mqtt.Client] = []
+        # url -> time.time() of the last message received from that broker. Seeded
+        # at connect so the age is measured from connection when nothing has
+        # arrived yet, rather than from the epoch.
+        self._last_message_at: dict[str, float] = {}
+
+    def _track_messages(self, url: str):
+        """Wrap the message callback so each arrival timestamps its broker."""
+        def on_message(client, userdata, msg):
+            self._last_message_at[url] = time.time()
+            self._on_message(client, userdata, msg)
+        return on_message
+
+    def _track_message_age(self, broker: BrokerConfig) -> None:
+        """Expose 'seconds since the last message' for ``broker``.
+
+        Evaluated at scrape time via ``set_function`` so the age keeps climbing
+        while a broker is silent — no background ticker needed. This is what
+        distinguishes a *silently stalled* connection (status 1, age climbing)
+        from a genuinely quiet topic or a clean disconnect (status 0).
+        """
+        if self._metrics is None:
+            return
+        url = self._broker_url(broker)
+        self._last_message_at.setdefault(url, time.time())
+        self._metrics.broker_last_message_age.labels(
+            report_by=self._config.sensor_centre_id, url=url,
+        ).set_function(lambda: time.time() - self._last_message_at[url])
 
     @staticmethod
     def _broker_url(broker: BrokerConfig) -> str:
@@ -179,7 +207,7 @@ class MqttManager:
                 client.tls_set()
         client.on_connect = self._make_on_connect(broker, subscriptions, role)
         client.on_disconnect = self._make_on_disconnect(broker)
-        client.on_message = self._on_message
+        client.on_message = self._track_messages(self._broker_url(broker))
         return client
 
     def _make_on_connect(
@@ -212,8 +240,10 @@ class MqttManager:
 
     def _connect(self, client: mqtt.Client, broker: BrokerConfig) -> None:
         # Publish an initial "disconnected" reading so the series exists from
-        # start-up (on_connect flips it to 1 once the connection is up).
+        # start-up (on_connect flips it to 1 once the connection is up), and
+        # start the message-age clock for this broker.
         self._set_broker_status(broker, False)
+        self._track_message_age(broker)
         client.reconnect_delay_set(min_delay=1, max_delay=60)
         try:
             client.connect_async(broker.host, broker.port, keepalive=60)

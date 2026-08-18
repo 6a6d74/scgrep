@@ -97,6 +97,15 @@ class Metrics:
             ["report_by", "url"],
             registry=self.registry,
         )
+        self.broker_last_message_age = Gauge(
+            _METRIC_PREFIX + "broker_last_message_age_seconds",
+            "Seconds since the last MQTT message arrived from this broker "
+            "(evaluated at scrape time; counts from connection when none has "
+            "arrived yet). A connected broker whose age keeps climbing is "
+            "silently delivering nothing",
+            ["report_by", "url"],
+            registry=self.registry,
+        )
 
 
 class _QuietRequestHandler(WSGIRequestHandler):
