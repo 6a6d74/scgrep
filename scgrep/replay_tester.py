@@ -18,7 +18,7 @@ import requests
 
 from .redis_store import RedisStore
 from .replay_registry import ReplayRegistry
-from .util import broker_authority, topic_to_query
+from .util import broker_authority, topic_to_collection, topic_to_query
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +95,9 @@ def sync_fetch(
     ``max_chars`` caps how much of the HTTP response body is logged.
     """
     interval = f"{start_iso}/{end_iso}"
-    base_url = f"{replay_url}/collections/wis2-notification-messages/items"
+    # Notification and Monitoring Event messages live in separate collections;
+    # the topic tree selects which one to query.
+    base_url = f"{replay_url}/collections/{topic_to_collection(topic)}/items"
     # The service matches whole topic levels as a prefix, so the MQTT trailing
     # '/#' (and any trailing '/') must be stripped; `topic` itself stays in MQTT
     # form for logging, Redis keys and metric labels.
@@ -319,6 +321,7 @@ def async_fetch(
     payload = {
         "inputs": {
             "datetime": interval,
+            "collection": topic_to_collection(topic),
             "subscriber-id": subscriber_id,
             "topic": topic_to_query(topic),
         }

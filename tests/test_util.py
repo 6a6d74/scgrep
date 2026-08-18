@@ -3,8 +3,28 @@ from scgrep.util import (
     epoch_to_iso,
     parse_time_to_epoch,
     topic_matches,
+    topic_to_collection,
     topic_to_query,
 )
+
+
+def test_topic_to_collection_routes_by_topic_tree():
+    # Data notifications (origin/ and cache/ trees).
+    assert topic_to_collection("cache/a/wis2/uk-metoffice/#") == "wis2-notification-messages"
+    assert topic_to_collection("origin/a/wis2/uk-metoffice/data/core") == (
+        "wis2-notification-messages"
+    )
+    # WIS2 Monitoring Event Messages.
+    assert topic_to_collection("monitor/a/wis2/ca-eccc-msc") == (
+        "wis2-monitoring-event-messages"
+    )
+    assert topic_to_collection("replay/a/wis2/ca-eccc-msc/uuid/#") == (
+        "wis2-monitoring-event-messages"
+    )
+    # A centre whose name merely starts with "monitor" is not the monitor tree.
+    assert topic_to_collection("cache/a/wis2/monitor-centre/x") == (
+        "wis2-notification-messages"
+    )
 
 
 def test_topic_to_query_strips_mqtt_wildcard_and_trailing_slash():

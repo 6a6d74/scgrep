@@ -37,6 +37,37 @@ def topic_matches(subscription: str, topic: str) -> bool:
     return topic_matches_sub(subscription, topic)
 
 
+#: Global Replay collection holding WIS2 data-notification messages.
+NOTIFICATION_COLLECTION = "wis2-notification-messages"
+#: Global Replay collection holding WIS2 Monitoring Event Messages.
+MONITORING_COLLECTION = "wis2-monitoring-event-messages"
+
+#: Topic trees served by :data:`MONITORING_COLLECTION`. Everything else (the
+#: ``origin/`` and ``cache/`` data trees) is served by the notification
+#: collection.
+_MONITORING_TOPIC_PREFIXES = ("monitor/a/wis2", "replay/a/wis2")
+
+
+def topic_to_collection(topic: str) -> str:
+    """Return the Global Replay collection that serves ``topic``.
+
+    Global Replay services split messages into two collections; the right one is
+    chosen from the topic tree. WIS2 Monitoring Event Messages live under
+    ``monitor/a/wis2`` (and the replay tree ``replay/a/wis2``); data
+    notifications, under ``origin/`` and ``cache/``, live in the notification
+    collection.
+
+    >>> topic_to_collection("cache/a/wis2/uk-metoffice/#")
+    'wis2-notification-messages'
+    >>> topic_to_collection("monitor/a/wis2/ca-eccc-msc")
+    'wis2-monitoring-event-messages'
+    """
+    text = topic.strip()
+    if any(text.startswith(prefix) for prefix in _MONITORING_TOPIC_PREFIXES):
+        return MONITORING_COLLECTION
+    return NOTIFICATION_COLLECTION
+
+
 def topic_to_query(topic: str) -> str:
     """Convert an MQTT topic filter into the form a Global Replay service expects.
 

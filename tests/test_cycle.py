@@ -15,7 +15,7 @@ from scgrep.test_cycle import run_cycle
 from scgrep.util import epoch_to_iso, parse_time_to_epoch
 
 REPLAY_URL = "https://replay.example.org"
-ITEMS_URL = f"{REPLAY_URL}/collections/wis2-notification-messages/items"
+ITEMS_URL = f"{REPLAY_URL}/collections/wis2-monitoring-event-messages/items"  # TOPIC is monitor/
 EXEC_URL = f"{REPLAY_URL}/processes/wis2-grep-subscriber/execution"
 TOPIC = "monitor/a/wis2/ca-eccc-msc"
 CENTRE = "ca-eccc-msc-global-replay"

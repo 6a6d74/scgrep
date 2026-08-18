@@ -16,7 +16,11 @@ from scgrep.replay_tester import (
 )
 
 REPLAY_URL = "https://replay.example.org"
-ITEMS_URL = f"{REPLAY_URL}/collections/wis2-notification-messages/items"
+NOTIFICATION_ITEMS_URL = f"{REPLAY_URL}/collections/wis2-notification-messages/items"
+MONITORING_ITEMS_URL = f"{REPLAY_URL}/collections/wis2-monitoring-event-messages/items"
+# The shared TOPIC below is a monitor/ topic, so it is served by the monitoring
+# collection; tests using a cache/ topic must register NOTIFICATION_ITEMS_URL.
+ITEMS_URL = MONITORING_ITEMS_URL
 EXEC_URL = f"{REPLAY_URL}/processes/wis2-grep-subscriber/execution"
 TOPIC = "monitor/a/wis2/ca-eccc-msc"
 CENTRE = "ca-eccc-msc-global-replay"
@@ -110,7 +114,7 @@ def test_sync_fetch_non_json():
 @responses.activate
 def test_sync_fetch_sends_topic_without_mqtt_wildcard():
     """The GET must carry the topic-level prefix, not the MQTT filter."""
-    responses.add(responses.GET, ITEMS_URL, json=_collection(0, []), status=200)
+    responses.add(responses.GET, NOTIFICATION_ITEMS_URL, json=_collection(0, []), status=200)
     sync_fetch(REPLAY_URL, CENTRE, "cache/a/wis2/uk-metoffice/#", "s", "e", 5.0, _store())
     sent = responses.calls[0].request
     assert "topic=cache%2Fa%2Fwis2%2Fuk-metoffice&" in sent.url + "&"
@@ -119,7 +123,7 @@ def test_sync_fetch_sends_topic_without_mqtt_wildcard():
 
 @responses.activate
 def test_sync_fetch_sends_topic_without_trailing_slash():
-    responses.add(responses.GET, ITEMS_URL, json=_collection(0, []), status=200)
+    responses.add(responses.GET, NOTIFICATION_ITEMS_URL, json=_collection(0, []), status=200)
     sync_fetch(REPLAY_URL, CENTRE, "cache/a/wis2/uk-metoffice/", "s", "e", 5.0, _store())
     sent = responses.calls[0].request
     assert "topic=cache%2Fa%2Fwis2%2Fuk-metoffice&" in sent.url + "&"
@@ -141,6 +145,47 @@ def test_async_fetch_posts_topic_without_mqtt_wildcard():
     )
     body = json.loads(responses.calls[0].request.body)
     assert body["inputs"]["topic"] == "cache/a/wis2/uk-metoffice"
+
+
+@responses.activate
+def test_sync_fetch_uses_monitoring_collection_for_monitor_topics():
+    """monitor/ topics must be fetched from the monitoring-event collection."""
+    responses.add(responses.GET, MONITORING_ITEMS_URL,
+                  json=_collection(1, [_feature("m1")]), status=200)
+    result = sync_fetch(REPLAY_URL, CENTRE, "monitor/a/wis2/ca-eccc-msc",
+                        "s", "e", 5.0, _store())
+    assert result.messages_fetched == 1
+    assert "wis2-monitoring-event-messages" in responses.calls[0].request.url
+
+
+@responses.activate
+def test_sync_fetch_uses_notification_collection_for_cache_topics():
+    responses.add(responses.GET, NOTIFICATION_ITEMS_URL, json=_collection(0, []), status=200)
+    sync_fetch(REPLAY_URL, CENTRE, "cache/a/wis2/uk-metoffice/#", "s", "e", 5.0, _store())
+    assert "wis2-notification-messages" in responses.calls[0].request.url
+
+
+@responses.activate
+def test_async_fetch_posts_collection_for_each_topic_tree():
+    centre_id, subscriber_id = "ca-eccc-msc-global-replay", "uuid-1234"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
+    for topic, expected in (
+        ("cache/a/wis2/uk-metoffice/#", "wis2-notification-messages"),
+        ("monitor/a/wis2/ca-eccc-msc", "wis2-monitoring-event-messages"),
+    ):
+        responses.reset()
+        responses.add(
+            responses.POST, EXEC_URL,
+            json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
+            status=200,
+        )
+        async_fetch(
+            REPLAY_URL, centre_id, topic, subscriber_id,
+            ["globalbroker.meteo.fr:8883"], "s", "e",
+            deadline_s=0.2, registry=ReplayRegistry(), baseline=0, poll_interval=0.02,
+        )
+        body = json.loads(responses.calls[0].request.body)
+        assert body["inputs"]["collection"] == expected, topic
 
 
 @responses.activate

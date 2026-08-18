@@ -147,6 +147,12 @@ deduplicated *count* comes from Redis (above).
 
 ### `replay_tester.py` — the two fetch paths
 
+The topic tree also selects the **collection**: `monitor/a/wis2` and
+`replay/a/wis2` topics are served by `wis2-monitoring-event-messages`, everything
+else (`origin/`, `cache/`) by `wis2-notification-messages`
+(`util.topic_to_collection()`). The synchronous fetch puts it in the request path,
+the asynchronous fetch sends it as a `collection` input in the POST payload.
+
 Both paths send the topic as a **level prefix**, not an MQTT filter:
 `util.topic_to_query()` strips a trailing `/#` and any trailing `/` before the
 request is built (Global Replay `topic` matching is a whole-level prefix with no

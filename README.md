@@ -694,10 +694,6 @@ counts the messages actually returned, records each in Redis, and flags any
 mismatch with `numberMatched` via
 `wmo_wis2_scgrep_response_invalid_numberMatched_flag`.
 
-The Global Replay Feature API exposes a single collection
-(`wis2-notification-messages`) which in practice also carries WIS2 Monitoring
-Event Messages.
-
 ### Topic handling
 
 Topics are configured **once**, in MQTT form (e.g. `cache/a/wis2/uk-metoffice/#`),
@@ -717,6 +713,20 @@ asynchronous requests alike. (Some services strip `/#` themselves on the
 asynchronous path only — sending the prefix form works everywhere.) The MQTT form
 is retained for the subscriptions, the Redis keys, the log lines and the `topic`
 metric label, so metric series are unaffected.
+
+**The topic also selects the collection.** Global Replay services hold data
+notifications and WIS2 Monitoring Event Messages in separate collections, chosen
+from the topic tree:
+
+| topic tree | collection |
+| --- | --- |
+| `origin/…`, `cache/…` | `wis2-notification-messages` |
+| `monitor/a/wis2/…`, `replay/a/wis2/…` | `wis2-monitoring-event-messages` |
+
+The synchronous fetch puts it in the request path
+(`/collections/<collection>/items`); the asynchronous fetch sends it as a
+`collection` input in the POST payload. This is automatic — no configuration
+needed beyond listing the topic.
 
 **`+` and `*` are rejected at start-up.** Global Replay services support neither:
 a request containing one returns HTTP `200` with **zero** messages, which is
