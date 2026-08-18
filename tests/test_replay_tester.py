@@ -1,3 +1,4 @@
+import json
 import logging
 import threading
 import time
@@ -104,6 +105,42 @@ def test_sync_fetch_non_json():
     result = sync_fetch(REPLAY_URL, CENTRE, TOPIC, "s", "e", 5.0, _store())
     assert result.invalid_format is True
     assert result.messages_fetched == 0
+
+
+@responses.activate
+def test_sync_fetch_sends_topic_without_mqtt_wildcard():
+    """The GET must carry the topic-level prefix, not the MQTT filter."""
+    responses.add(responses.GET, ITEMS_URL, json=_collection(0, []), status=200)
+    sync_fetch(REPLAY_URL, CENTRE, "cache/a/wis2/uk-metoffice/#", "s", "e", 5.0, _store())
+    sent = responses.calls[0].request
+    assert "topic=cache%2Fa%2Fwis2%2Fuk-metoffice&" in sent.url + "&"
+    assert "%23" not in sent.url  # no '#' reaches the service
+
+
+@responses.activate
+def test_sync_fetch_sends_topic_without_trailing_slash():
+    responses.add(responses.GET, ITEMS_URL, json=_collection(0, []), status=200)
+    sync_fetch(REPLAY_URL, CENTRE, "cache/a/wis2/uk-metoffice/", "s", "e", 5.0, _store())
+    sent = responses.calls[0].request
+    assert "topic=cache%2Fa%2Fwis2%2Fuk-metoffice&" in sent.url + "&"
+
+
+@responses.activate
+def test_async_fetch_posts_topic_without_mqtt_wildcard():
+    centre_id, subscriber_id = "ca-eccc-msc-global-replay", "uuid-1234"
+    wildcard = f"replay/a/wis2/{centre_id}/{subscriber_id}/#"
+    responses.add(
+        responses.POST, EXEC_URL,
+        json=_valid_metadata(wildcard, ["mqtts://globalbroker.meteo.fr:8883"]),
+        status=200,
+    )
+    async_fetch(
+        REPLAY_URL, centre_id, "cache/a/wis2/uk-metoffice/#", subscriber_id,
+        ["globalbroker.meteo.fr:8883"], "s", "e",
+        deadline_s=0.2, registry=ReplayRegistry(), baseline=0, poll_interval=0.02,
+    )
+    body = json.loads(responses.calls[0].request.body)
+    assert body["inputs"]["topic"] == "cache/a/wis2/uk-metoffice"
 
 
 @responses.activate

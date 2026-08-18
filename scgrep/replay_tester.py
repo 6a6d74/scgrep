@@ -18,7 +18,7 @@ import requests
 
 from .redis_store import RedisStore
 from .replay_registry import ReplayRegistry
-from .util import broker_authority
+from .util import broker_authority, topic_to_query
 
 logger = logging.getLogger(__name__)
 
@@ -96,7 +96,11 @@ def sync_fetch(
     """
     interval = f"{start_iso}/{end_iso}"
     base_url = f"{replay_url}/collections/wis2-notification-messages/items"
-    first_url = f"{base_url}?datetime={interval}&topic={topic}"
+    # The service matches whole topic levels as a prefix, so the MQTT trailing
+    # '/#' (and any trailing '/') must be stripped; `topic` itself stays in MQTT
+    # form for logging, Redis keys and metric labels.
+    query_topic = topic_to_query(topic)
+    first_url = f"{base_url}?datetime={interval}&topic={query_topic}"
     aborted_delay_ms = deadline_s * 1000
 
     start = time.monotonic()
@@ -122,7 +126,7 @@ def sync_fetch(
     log_request(f"GET {first_url}")
     try:
         resp = requests.get(
-            base_url, params={"datetime": interval, "topic": topic},
+            base_url, params={"datetime": interval, "topic": query_topic},
             headers=_HEADERS, stream=True, timeout=max(0.05, deadline_at - start),
         )
     except requests.RequestException as exc:
@@ -309,11 +313,14 @@ def async_fetch(
 
     interval = f"{start_iso}/{end_iso}"
     url = f"{replay_url}/processes/wis2-grep-subscriber/execution"
+    # As for the synchronous fetch, send the topic-level prefix rather than the
+    # MQTT filter. The service strips a trailing '/#' itself for asynchronous
+    # requests, but not a trailing '/', so normalise both here.
     payload = {
         "inputs": {
             "datetime": interval,
             "subscriber-id": subscriber_id,
-            "topic": topic,
+            "topic": topic_to_query(topic),
         }
     }
 

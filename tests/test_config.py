@@ -90,6 +90,27 @@ def test_missing_subscription_topics():
         Config.from_env(env)
 
 
+@pytest.mark.parametrize("topic", [
+    "cache/a/wis2/+/data",                       # MQTT single-level wildcard
+    "cache/a/wis2/uk-metoffice/+",
+    "cache/a/wis2/uk-metoffice/*",               # Elasticsearch-style wildcard
+    "cache/a/wis2/us-noaa-nws/#,cache/a/wis2/+", # one bad entry among good ones
+])
+def test_wildcard_topics_rejected_at_startup(topic):
+    """'+' and '*' are unsupported by Global Replay services: they return zero
+    messages, which is indistinguishable from a real gap. Fail fast instead."""
+    env = dict(BASE_ENV, SUBSCRIPTION_TOPICS=topic)
+    with pytest.raises(ConfigError, match=r"\+.*\*|wildcard"):
+        Config.from_env(env)
+
+
+def test_trailing_hash_topics_still_accepted():
+    """'/#' is fine — it is stripped when querying the Global Replay."""
+    env = dict(BASE_ENV, SUBSCRIPTION_TOPICS="cache/a/wis2/uk-metoffice/#")
+    cfg = Config.from_env(env)
+    assert cfg.subscription_topics == ["cache/a/wis2/uk-metoffice/#"]
+
+
 def test_replay_list_length_mismatch():
     env = dict(BASE_ENV)
     env["GLOBAL_REPLAY_CENTRE_IDS"] = "a,b"

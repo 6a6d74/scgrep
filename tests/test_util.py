@@ -3,7 +3,26 @@ from scgrep.util import (
     epoch_to_iso,
     parse_time_to_epoch,
     topic_matches,
+    topic_to_query,
 )
+
+
+def test_topic_to_query_strips_mqtt_wildcard_and_trailing_slash():
+    # Global Replay matches whole topic levels as a prefix: a trailing '/#' or
+    # '/' matches nothing, so both must be stripped before querying.
+    assert topic_to_query("cache/a/wis2/uk-metoffice/#") == "cache/a/wis2/uk-metoffice"
+    assert topic_to_query("cache/a/wis2/uk-metoffice/") == "cache/a/wis2/uk-metoffice"
+    assert topic_to_query("cache/a/wis2/uk-metoffice//") == "cache/a/wis2/uk-metoffice"
+    # Already in query form, or a deeper prefix: unchanged.
+    assert topic_to_query("cache/a/wis2/uk-metoffice") == "cache/a/wis2/uk-metoffice"
+    assert topic_to_query("cache/a/wis2/uk-metoffice/data/core") == (
+        "cache/a/wis2/uk-metoffice/data/core"
+    )
+    # A '#' inside a level is not an MQTT wildcard and must not be mangled.
+    assert topic_to_query("cache/a/wis2/x#y") == "cache/a/wis2/x#y"
+    # Bare '#' has no Global Replay equivalent.
+    assert topic_to_query("#") == ""
+    assert topic_to_query("  cache/a/wis2/x/#  ") == "cache/a/wis2/x"
 
 
 def test_parse_time_with_z():

@@ -37,6 +37,32 @@ def topic_matches(subscription: str, topic: str) -> bool:
     return topic_matches_sub(subscription, topic)
 
 
+def topic_to_query(topic: str) -> str:
+    """Convert an MQTT topic filter into the form a Global Replay service expects.
+
+    Topics are configured (and used for MQTT subscriptions) in MQTT form, e.g.
+    ``cache/a/wis2/uk-metoffice/#``. The Global Replay ``topic`` parameter is not
+    an MQTT filter: it matches whole topic *levels* as a prefix, so a trailing
+    ``/#`` or ``/`` matches nothing and must be removed.
+
+    Stripping the trailing ``/#`` is what the service itself does for asynchronous
+    requests; the synchronous (OGC API - Features) request has no such handling,
+    so the client must do it for both. ``#`` alone becomes an empty string (the
+    service has no "match everything" form).
+
+    >>> topic_to_query("cache/a/wis2/uk-metoffice/#")
+    'cache/a/wis2/uk-metoffice'
+    >>> topic_to_query("cache/a/wis2/uk-metoffice/")
+    'cache/a/wis2/uk-metoffice'
+    """
+    query = topic.strip()
+    if query == "#":
+        return ""
+    if query.endswith("/#"):
+        query = query[:-2]
+    return query.rstrip("/")
+
+
 def broker_authority(url: str) -> str:
     """Return ``host:port`` for an MQTT URL, ignoring credentials and scheme.
 

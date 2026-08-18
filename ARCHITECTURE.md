@@ -147,6 +147,13 @@ deduplicated *count* comes from Redis (above).
 
 ### `replay_tester.py` — the two fetch paths
 
+Both paths send the topic as a **level prefix**, not an MQTT filter:
+`util.topic_to_query()` strips a trailing `/#` and any trailing `/` before the
+request is built (Global Replay `topic` matching is a whole-level prefix with no
+wildcards). The configured MQTT form is kept everywhere else — subscriptions,
+Redis keys, log lines and the `topic` metric label. `+`/`*` never reach here:
+`Config` rejects them at start-up.
+
 - **`sync_fetch`** — OGC API - Features. Issues `GET .../collections/…/items?
   datetime=…&topic=…`, measures time-to-first-byte, reads `numberMatched` (from
   the first page only), then **pages** through every `rel: next` link. For each

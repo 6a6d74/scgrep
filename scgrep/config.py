@@ -95,6 +95,19 @@ class Config:
         subscription_topics = _split(env.get("SUBSCRIPTION_TOPICS", ""))
         if not subscription_topics:
             raise ConfigError("SUBSCRIPTION_TOPICS is required")
+        # Global Replay services match whole topic levels as a prefix; they have
+        # no wildcard support. A '+' is silently rewritten to '*' by at least one
+        # implementation, and neither matches anything — the request succeeds and
+        # returns zero messages, which is indistinguishable from a real gap. Fail
+        # fast instead. (A trailing '/#' is fine: it is stripped per topic_to_query.)
+        bad = [t for t in subscription_topics if "+" in t or "*" in t]
+        if bad:
+            raise ConfigError(
+                "SUBSCRIPTION_TOPICS must not contain '+' or '*' wildcards — "
+                "Global Replay services do not support them and would return no "
+                f"messages: {', '.join(bad)}. Use a topic prefix (optionally "
+                "ending '/#') instead."
+            )
 
         broker_urls = _split(
             env.get(

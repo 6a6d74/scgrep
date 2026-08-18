@@ -307,7 +307,7 @@ All configuration is via environment variables (see `.env.example`).
 | Variable | Default | Description |
 | --- | --- | --- |
 | `SENSOR_CENTRE_ID` | *(required)* | Name of this sensor centre instance (`report_by`). |
-| `SUBSCRIPTION_TOPICS` | *(required)* | Comma-delimited topics to test (wildcards allowed); typically 10–20, mixing notification and event topics. |
+| `SUBSCRIPTION_TOPICS` | *(required)* | Comma-delimited topics to test, in **MQTT form** (a trailing `/#` is fine); typically 10–20, mixing notification and event topics. `+` and `*` are **rejected at start-up** — see [Topic handling](#topic-handling). |
 | `GLOBAL_BROKER_URLS` | `mqtts://everyone:everyone@globalbroker.meteo.fr:8883` | Comma-delimited Global Broker MQTT URLs. |
 | `GLOBAL_REPLAY_CENTRE_IDS` | `ca-eccc-msc-global-replay` | Comma-delimited centre-ids under test. |
 | `GLOBAL_REPLAY_URLS` | `https://wis2-grep.weather.gc.ca` | Comma-delimited Global Replay URLs (same length/order as centre-ids). |
@@ -697,6 +697,35 @@ mismatch with `numberMatched` via
 The Global Replay Feature API exposes a single collection
 (`wis2-notification-messages`) which in practice also carries WIS2 Monitoring
 Event Messages.
+
+### Topic handling
+
+Topics are configured **once**, in MQTT form (e.g. `cache/a/wis2/uk-metoffice/#`),
+and used directly for the Global Broker subscriptions. Global Replay services,
+however, do **not** accept MQTT filters: their `topic` parameter matches whole
+topic *levels* as a prefix, with no wildcards. So SCGRep converts the configured
+topic when it builds a Global Replay request:
+
+| configured (MQTT) | sent to the Global Replay |
+| --- | --- |
+| `cache/a/wis2/uk-metoffice/#` | `cache/a/wis2/uk-metoffice` |
+| `cache/a/wis2/uk-metoffice/` | `cache/a/wis2/uk-metoffice` |
+| `cache/a/wis2/uk-metoffice` | `cache/a/wis2/uk-metoffice` |
+
+Both the trailing `/#` and any trailing `/` are stripped, for the synchronous and
+asynchronous requests alike. (Some services strip `/#` themselves on the
+asynchronous path only — sending the prefix form works everywhere.) The MQTT form
+is retained for the subscriptions, the Redis keys, the log lines and the `topic`
+metric label, so metric series are unaffected.
+
+**`+` and `*` are rejected at start-up.** Global Replay services support neither:
+a request containing one returns HTTP `200` with **zero** messages, which is
+indistinguishable from a genuine data gap. (At least one implementation rewrites
+`+` to `*` before querying, which does not help — measured against
+`ca-eccc-msc-global-replay` on 2026-08-18, `+` and `*` returned 0 on both the
+synchronous and asynchronous paths, in every position, including a bare `*`.)
+Failing fast is better than silently reporting nothing. Use a topic prefix,
+optionally ending `/#`, instead.
 
 ### Asynchronous delivery cap
 
