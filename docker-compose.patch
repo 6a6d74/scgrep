@@ -1,8 +1,8 @@
 diff --git a/docker-compose.yml b/docker-compose.yml
-index a6f15da..3b94541 100644
+index d3ff27d..1b43ebb 100644
 --- a/docker-compose.yml
 +++ b/docker-compose.yml
-@@ -1,137 +1,50 @@
+@@ -1,92 +1,19 @@
 -# SCGRep deployment (self-contained).
 +# SCGRep deployment — uses shared infrastructure from /Users/jeremytandy/docker/compose/
 +# (traefik, redis, prometheus, grafana are provided externally).
@@ -95,37 +95,24 @@ index a6f15da..3b94541 100644
          required: false
      environment:
 -      SENSOR_CENTRE_ID: io-wis2dev-myinstance-sensor-centre-global-replay
--      # Curated list of topics to test (cache/notification topics for several
--      # centres); normally 10-20 topics mixing notification and event topics.
 +      SENSOR_CENTRE_ID: net-ts-moray-pumpkinseed-mini-sensor-centre-global-replay
-       SUBSCRIPTION_TOPICS: "cache/a/wis2/us-noaa-nws/#,cache/a/wis2/uk-metoffice/#,cache/a/wis2/kg-kyrgyzhydromet/#,cache/a/wis2/int-eumetsat/#,cache/a/wis2/be-rmib/#"
-       GLOBAL_BROKER_URLS: "mqtts://everyone:everyone@globalbroker.meteo.fr:8883"
-       GLOBAL_REPLAY_CENTRE_IDS: ca-eccc-msc-global-replay
-       GLOBAL_REPLAY_URLS: "https://wis2-grep.weather.gc.ca"
--      # Comma-delimited broker(s) on which the Global Replay service delivers
--      # async replay messages (one during this preoperational phase). The
--      # operational Global Brokers do not (yet) republish this GRep instance's
--      # messages, but the WIS2 test Global Broker (io-wis2dev-global-broker) is
--      # connected to the GRep's local broker and republishes them, so we subscribe
--      # for replays there. (The GRep's own broker,
--      # mqtts://everyone:everyone@wis2-grep.weather.gc.ca:8883, also works.)
--      #
--      # OPERATIONAL CASE: once replays are routed via the operational Global
--      # Brokers, leave this BLANK ("") — SCGRep then subscribes for replays on the
--      # GLOBAL_BROKER_URLS brokers themselves (no separate replay broker needed).
-       GLOBAL_REPLAY_BROKER_URLS: "mqtts://everyone:everyone@gb.wis2dev.io:8883"
--      # The test Global Broker presents a valid certificate, so TLS is verified.
--      # (Set to "true" only if a replay broker's certificate lapses.)
-       GLOBAL_REPLAY_BROKER_TLS_INSECURE: "false"
+       # Curated list of topics to test (cache/notification topics for several
+       # centres); normally 10-20 topics mixing notification and event topics.
+       SUBSCRIPTION_TOPICS: "cache/a/wis2/us-noaa-nws/#,cache/a/wis2/uk-metoffice/#,cache/a/wis2/uk-metoffice-globalwave/#,cache/a/wis2/kg-kyrgyzhydromet/#,cache/a/wis2/int-eumetsat/#,cache/a/wis2/be-rmib/#"
+@@ -113,10 +40,8 @@ services:
        REDIS_URL: redis:6379
        METRICS_ENDPOINT: /metrics
        METRICS_PORT: "8000"
 -      # Timing (seconds). TEST_INTERVAL shortened to 60 for more frequent
 -      # testing; TIME_LAG kept at the operational 300.
        TIME_LAG: "300"
-       TEST_INTERVAL: "60"
--      # Also write logs to a file (in the mounted ./logs volume), flushed
--      # periodically. The log-purge service trims this file hourly.
+-      TEST_INTERVAL: "60"
++      TEST_INTERVAL: "300"
+       # INFO for steady state. Set to DEBUG to additionally log every MQTT message
+       # received with its source broker and a Duplicate? flag (very verbose — use
+       # for diagnosis only, e.g. comparing delivery between two replay brokers).
+@@ -125,10 +50,17 @@ services:
+       # periodically. The log-purge service trims this file hourly.
        LOG_FILE: /var/log/scgrep/scgrep.log
        LOG_FILE_FLUSH_INTERVAL: "60"
 +    labels:
@@ -142,29 +129,9 @@ index a6f15da..3b94541 100644
 -    # No published ports: Traefik fronts the metrics endpoint, reaching this
 -    # container by service name (scgrep:8000) over the shared network.
      healthcheck:
--      # Probe the metrics endpoint (honours METRICS_PORT/METRICS_ENDPOINT).
--      # No curl/wget in the slim image, so use Python; urlopen raises on non-200.
-       test:
-         - CMD
-         - python
-         - -c
-         - |
--          import os, sys, urllib.request
-+          import os, urllib.request
-           port = os.environ.get("METRICS_PORT", "8000")
-           endpoint = os.environ.get("METRICS_ENDPOINT", "/metrics")
-           urllib.request.urlopen(f"http://localhost:{port}{endpoint}", timeout=5)
-@@ -142,9 +55,6 @@ services:
-     networks:
-       - traefik
- 
--  # Hourly job that trims the shared log file, removing entries older than
--  # PURGE_LOG_MAX_AGE_HOURS. Reuses the scgrep image (it has Python) and runs the
--  # standalone script mounted from ./scripts.
-   log-purge:
-     image: scgrep:latest
-     depends_on:
-@@ -168,43 +78,7 @@ services:
+       # Probe the metrics endpoint (honours METRICS_PORT/METRICS_ENDPOINT).
+       # No curl/wget in the slim image, so use Python; urlopen raises on non-200.
+@@ -174,43 +106,7 @@ services:
      networks:
        - traefik
  
