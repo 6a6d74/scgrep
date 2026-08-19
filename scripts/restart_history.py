@@ -13,6 +13,9 @@ Reads two sources and merges them, because neither is complete on its own:
 * the log file (``LOG_FILE``, default ``logs/scgrep.log``) — survives restarts,
   but is trimmed by the hourly purge.
 
+SCGRep logs in **UTC**; this script converts to the system's **local** time for
+display, and applies the date filter to the local date.
+
 Duplicate lines (present in both) are collapsed. Standard library only; run with
 ``-h`` / ``--help`` for usage.
 """
@@ -23,7 +26,7 @@ import argparse
 import re
 import subprocess
 import sys
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 START_RE = re.compile(
     r"^(\d{4}-\d{2}-\d{2}) (\d{2}:\d{2}:\d{2}),\d+ .*"
@@ -62,7 +65,12 @@ def read_sources(container: str, log_file: str, use_docker: bool) -> list[str]:
 
 
 def collect(lines, wanted_dates):
-    """Return [(kind, date, time, detail)] for restart/connection events."""
+    """Return [(kind, local_datetime, detail)] for restart/connection events.
+
+    Log timestamps are written in **UTC**; they are converted to the system's
+    local zone here, and the date filter is applied to the *local* date so that
+    "today" means today where the operator is sitting.
+    """
     events = []
     for line in lines:
         for kind, rx in (("start", START_RE), ("connect", CONNECT_RE),
@@ -70,8 +78,9 @@ def collect(lines, wanted_dates):
             m = rx.match(line)
             if not m:
                 continue
-            d, t = m.group(1), m.group(2)
-            if wanted_dates and d not in wanted_dates:
+            stamp = datetime.strptime(f"{m.group(1)} {m.group(2)}", "%Y-%m-%d %H:%M:%S")
+            local = stamp.replace(tzinfo=timezone.utc).astimezone()
+            if wanted_dates and local.strftime("%Y-%m-%d") not in wanted_dates:
                 break
             if kind == "start":
                 detail = f"{m.group(3)}  subscriber-id={m.group(4)}"
@@ -79,23 +88,23 @@ def collect(lines, wanted_dates):
                 detail = f"{m.group(3)} {m.group(4)}".strip()
             else:
                 detail = m.group(3)
-            events.append((kind, d, t, detail))
+            events.append((kind, local, detail))
             break
-    events.sort(key=lambda e: (e[1], e[2]))
+    events.sort(key=lambda e: e[1])
     return events
 
 
-def seconds_between(d1, t1, d2, t2) -> float:
-    fmt = "%Y-%m-%d %H:%M:%S"
-    return (datetime.strptime(f"{d2} {t2}", fmt)
-            - datetime.strptime(f"{d1} {t1}", fmt)).total_seconds()
-
-
-def hms_delta(d1, t1, d2, t2) -> str:
-    fmt = "%Y-%m-%d %H:%M:%S"
-    delta = datetime.strptime(f"{d2} {t2}", fmt) - datetime.strptime(f"{d1} {t1}", fmt)
-    s = int(delta.total_seconds())
+def hms_delta(a: datetime, b: datetime) -> str:
+    s = int((b - a).total_seconds())
     return f"{s // 3600}h{s % 3600 // 60:02d}m" if s >= 3600 else f"{s // 60}m{s % 60:02d}s"
+
+
+def tz_label() -> str:
+    now = datetime.now().astimezone()
+    off = now.utcoffset() or timedelta(0)
+    sign = "+" if off >= timedelta(0) else "-"
+    mins = abs(int(off.total_seconds())) // 60
+    return f"{now.tzname()} (UTC{sign}{mins // 60:02d}:{mins % 60:02d})"
 
 
 def main(argv=None) -> int:
@@ -122,8 +131,10 @@ def main(argv=None) -> int:
     p.add_argument("--no-docker", action="store_true",
                    help="read only the log file, not `docker logs`")
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--date", metavar="YYYY-MM-DD", help="a single date (default: today)")
-    g.add_argument("--days", type=int, metavar="N", help="the last N days, including today")
+    g.add_argument("--date", metavar="YYYY-MM-DD",
+               help="a single local date (default: today, local)")
+    g.add_argument("--days", type=int, metavar="N",
+               help="the last N local days, including today")
     g.add_argument("--all", action="store_true", help="every date present in the logs")
     p.add_argument("--disconnects", action="store_true",
                    help="also show broker disconnects (reveals connection flapping)")
@@ -152,6 +163,7 @@ def main(argv=None) -> int:
 
     scope = "all dates" if wanted is None else ", ".join(sorted(wanted))
     print(f"SCGRep restart history — {scope}")
+    print(f"times shown in local time, {tz_label()}; the log records UTC")
     print(f"sources: {'docker logs ' + args.container + ' + ' if not args.no_docker else ''}"
           f"{args.log_file}\n")
     if not events:
@@ -170,23 +182,22 @@ def main(argv=None) -> int:
                   f"— pass --connections to list them")
         later = 0
 
-    for kind, d, t, detail in events:
+    for kind, when, detail in events:
         if kind == "start":
             flush_later()
-            gap = f"   (+{hms_delta(*prev, d, t)} since previous restart)" if prev else ""
-            print(f"\n● RESTART  {d} {t}  {detail}{gap}")
-            prev = (d, t)
+            gap = f"   (+{hms_delta(prev, when)} since previous restart)" if prev else ""
+            print(f"\n● RESTART  {when:%Y-%m-%d %H:%M:%S}  {detail}{gap}")
+            prev = when
             continue
         label = "connected   " if kind == "connect" else "DISCONNECT  "
         if prev is None:
             # Belongs to a restart that predates the window being shown.
             orphans += 1
             if args.connections:
-                print(f"    ·  {label} {d} {t}  {detail}")
+                print(f"    ·  {label} {when:%Y-%m-%d %H:%M:%S}  {detail}")
             continue
-        at_startup = seconds_between(*prev, d, t) <= args.settle
-        if at_startup or args.connections:
-            print(f"    ├─ {label} {t}  {detail}")
+        if (when - prev).total_seconds() <= args.settle or args.connections:
+            print(f"    ├─ {label} {when:%H:%M:%S}  {detail}")
         else:
             later += 1
     flush_later()
@@ -196,9 +207,9 @@ def main(argv=None) -> int:
 
     print(f"\n{len(starts)} restart(s).", end="")
     if starts:
-        _, d, t, _ = starts[-1]
-        print(f" Most recent: {d} {t}"
-              f" ({hms_delta(d, t, str(date.today()), datetime.now().strftime('%H:%M:%S'))} ago).")
+        last = starts[-1][1]
+        print(f" Most recent: {last:%Y-%m-%d %H:%M:%S}"
+              f" ({hms_delta(last, datetime.now().astimezone())} ago).")
     else:
         print(" (Connection events shown may belong to a restart outside the window.)")
     return 0
