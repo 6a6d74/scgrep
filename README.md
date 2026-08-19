@@ -554,6 +554,24 @@ How to read a difference between the baseline and what a Global Replay
 service returns, how to confirm whether it is real, and the service
 behaviours that produce misleading numbers.
 
+### When did SCGRep last restart?
+
+`scripts/restart_history.py` answers that, which is usually the first thing to
+establish when the metrics look wrong:
+
+```bash
+python scripts/restart_history.py            # today
+python scripts/restart_history.py --days 3   # today and the two days before
+python scripts/restart_history.py --connections --disconnects   # every event
+```
+
+It merges `docker logs scgrep` with `logs/scgrep.log`, because neither is
+complete on its own — `docker logs` only covers the **current** container (lost on
+every recreate) while the file survives restarts but is trimmed by the hourly
+purge. Each restart is listed with the connections it made at start-up, the gap
+since the previous restart, and a count of any later reconnections (broker
+flapping) rather than a wall of them.
+
 ### After a (re)start the baseline reads zero — for about `TIME_LAG`
 
 For the first few minutes after SCGRep starts, `messages_received` is **0** for
