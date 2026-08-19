@@ -264,6 +264,46 @@ period (when the asynchronous fetch completes): the counters are incremented and
 the gauges set at that same instant, so a single Prometheus scrape sees a
 consistent set of values for the cycle rather than a mix of old and new.
 
+### How the three counts are made
+
+All three counts are produced **the same way**, so that they are directly
+comparable: every message is recorded in Redis against its own `pubtime`, and the
+count is a `ZCOUNT` over the test window. The window is floored to whole seconds
+and **half-open, `[start, end)`** — a message published exactly on a boundary
+belongs to one window only, never to both.
+
+| count | what is recorded | keyspace |
+| --- | --- | --- |
+| **baseline** (`messages_received`) | every message received live from the Global Brokers, deduplicated by message `id` | `scgrep:topic:<topic>` |
+| **`http`** (`messages_fetched`, synchronous) | every Feature returned by the OGC API - Features fetch, across **all** pages | `scgrep:sync:<centre>:<topic>` |
+| **`mqtt`** (`messages_fetched`, asynchronous) | every replayed message delivered over MQTT, deduplicated by `id` across replay brokers | `scgrep:replay:<centre>:<topic>` |
+
+The replay keyspaces are cleared at the start of each cycle; the baseline expires
+on a TTL. Because all three apply one interval to one clock, a difference between
+them is a real difference in what each route saw — not an artefact of counting.
+
+#### Why `http` is not `numberMatched`
+
+The count for `http` is deliberately **not** the service's `numberMatched`. OGC
+API - Features selects features whose temporal property *intersects* the
+`datetime` interval, and that interval is **closed at both ends** — so
+`numberMatched` includes the entire boundary second, which SCGRep's next,
+contiguous window then counts again. Using it directly would inflate `http`
+against both the baseline and `mqtt` by exactly that second's traffic.
+
+The effect is not marginal: measured against `ca-eccc-msc-global-replay` on
+2026-08-19, `http` exceeded the baseline in **290 of 2,489 topic-cycles (11.7%)**,
+and the excess equalled the boundary second every time. It bites hardest for
+centres that publish on whole-second `pubtime` values (86% of all messages, and
+100% for `us-noaa-nws`), because then a whole second's traffic lands on the
+boundary at once.
+
+`numberMatched` is still requested, **logged** next to the re-count, and still
+drives `wmo_wis2_scgrep_response_invalid_numberMatched_flag`. It simply answers a
+different question — *did the service serve as many messages as it claimed?* —
+while `messages_fetched` answers *how many messages did SCGRep verify inside its
+own window?*
+
 ## Dashboards and Prometheus
 
 The Compose stack already includes **Prometheus** and **Grafana**, pre-wired:
@@ -526,17 +566,10 @@ the tool is to watch **how large** the difference is.
   the same way as the baseline and deduplicated by message `id` across replay
   brokers) — sampled at **slightly different instants** against a continuously
   updating stream.
-- The **synchronous `numberMatched` is not used as the count.** OGC API - Features
-  selects features *intersecting* the `datetime` interval, which is closed at both
-  ends, so `numberMatched` includes the whole boundary second — and the next,
-  contiguous window includes it again. SCGRep therefore re-counts the messages the
-  fetch actually paged through over its own half-open `[start, end)` window, so
-  `http`, `mqtt` and the baseline all measure the same interval. Measured against
-  `ca-eccc-msc-global-replay` on 2026-08-19, the un-corrected `http` count exceeded
-  the baseline in 11.7% of topic-cycles, by exactly the boundary second's traffic
-  each time. `numberMatched` is still logged, and still drives
-  `response_invalid_numberMatched_flag` (a different question: did the service
-  serve as many messages as it claimed?).
+- A `Result:` line showing `fetched` below `numberMatched` is **expected**, not a
+  fault: `numberMatched` counts the boundary second (closed interval) and
+  `fetched` does not (half-open) — see
+  [How the three counts are made](#how-the-three-counts-are-made).
 - Messages near the **edges of the datetime window** can fall on either side
   depending on exactly when each query runs, shifting a few messages in or out.
   The test window is **floored to whole seconds** and treated as **half-open**

@@ -134,6 +134,31 @@ keyspace, `scgrep:sync:<centre-id>:<pattern>` (`store_sync_message` /
 `count_sync_messages` / `clear_sync`), kept separate from the baseline and the
 replay records for the same reason.
 
+#### All three counts, one method
+
+| count | recorded from | keyspace |
+| --- | --- | --- |
+| baseline (`messages_received`) | live Global Broker messages, deduplicated by `id` | `scgrep:topic:<pattern>` |
+| `http` (`messages_fetched`) | every Feature returned by the synchronous fetch, across all pages | `scgrep:sync:<centre>:<pattern>` |
+| `mqtt` (`messages_fetched`) | replayed messages delivered over MQTT, deduplicated by `id` | `scgrep:replay:<centre>:<pattern>` |
+
+Each is a `ZCOUNT` over the cycle's window, scored by the message's own `pubtime`,
+and the window is floored to whole seconds and **half-open** `[start, end)`. One
+interval, one clock, three routes — so a difference between them is a real
+difference in what each route saw.
+
+**This is why `http` is not the service's `numberMatched`.** OGC API - Features
+selects features *intersecting* the `datetime` interval, which is **closed** at
+both ends, so `numberMatched` includes the whole boundary second — which the next,
+contiguous window counts again. Taking it directly would inflate `http` against
+both the baseline and `mqtt` by exactly that second's traffic (measured against
+`ca-eccc-msc-global-replay` on 2026-08-19: 290 of 2,489 topic-cycles, 11.7%,
+inflated by precisely the boundary second each time). `run_cycle` therefore
+replaces the `http` count with `count_sync_messages`. `numberMatched` is kept on
+the `FetchResult` (`number_matched`), logged beside the re-count, and still drives
+`invalid_numberMatched` — which asks a different question: did the service serve
+as many messages as it claimed?
+
 ### `replay_registry.py` — timing async replays
 
 `ReplayRegistry` is a thread-safe map from an expected replay **channel** to a

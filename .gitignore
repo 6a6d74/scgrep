@@ -32,3 +32,6 @@ logs/.purge-*
 
 # Shareable discrepancy reports (not part of the repo)
 docs/global-replay-discrepancy-*.md
+
+# Internal methodology notes (working analyses, not part of the repo)
+docs/scgrep-methodology-*.md
