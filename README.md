@@ -128,6 +128,44 @@ docker compose up --build
 If you change `METRICS_PORT`, update the backend URL in `traefik/dynamic.yml` to
 match.
 
+#### Changing configuration without resetting the baseline
+
+To apply a configuration change — adding a topic to `SUBSCRIPTION_TOPICS`, say —
+recreate **only** the `scgrep` service:
+
+```bash
+# edit docker-compose.yml, then:
+docker compose up -d scgrep        # add --build only if the code changed
+```
+
+The baseline lives in **Redis**, not in SCGRep, so leaving Redis running keeps it.
+A recreated SCGRep reads the same `scgrep:topic:<topic>` keys immediately and the
+existing topics carry on with their history intact — no empty-baseline period.
+
+Two details:
+
+- Use **`up -d`, not `restart`**. `docker compose restart scgrep` reuses the
+  existing container, whose environment was fixed when it was created, so it will
+  **not** pick up edited variables. `up -d` sees the changed config and recreates
+  the container.
+- Avoid `docker compose down` for this. It removes the Redis container too, which
+  wipes the baseline and costs the
+  [start-up blackout](#after-a-restart-the-baseline-reads-zero--for-about-time_lag)
+  of roughly `TIME_LAG + TEST_INTERVAL`.
+
+What this does **not** avoid:
+
+- A **newly added topic** has no history in Redis, so that topic alone needs
+  `TIME_LAG + TEST_INTERVAL` before its baseline is meaningful. The other topics
+  are unaffected.
+- The few seconds the container is down are missed on every topic, showing up
+  `TIME_LAG` later as a small baseline dip in one or two cycles.
+- SCGRep generates a **new subscriber UUID** on start, so the replay channel
+  changes; it re-subscribes before the first request, so nothing is lost.
+
+(Redis keys carry a `TIME_LAG + TEST_INTERVAL + 60` second TTL, so if SCGRep is
+down longer than that the baseline expires regardless.)
+
 ### Running alongside existing shared services
 
 If you already have Traefik, Redis, Prometheus, and Grafana running as shared
@@ -588,7 +626,9 @@ empty. The Global Replay service, by contrast, holds the history, so `http` and
 
 Expect it to last about **`TIME_LAG` + `TEST_INTERVAL`** (≈ 6 minutes with the
 default 300 s + 60 s), after which baselines fill in and the comparison becomes
-meaningful again. Ignore any `baseline` vs `http`/`mqtt` difference from that
+meaningful again. It is **avoidable for a configuration change**: recreating only
+the `scgrep` service leaves Redis — and therefore the baseline — intact, see
+[Changing configuration without resetting the baseline](#changing-configuration-without-resetting-the-baseline). Ignore any `baseline` vs `http`/`mqtt` difference from that
 period — a `baseline = 0` against a large fetched count is your own missing
 history, not a replay surplus. The same reasoning applies to any gap in reception
 (see [Broker message age](#metrics)): the baseline can only ever reflect what this
