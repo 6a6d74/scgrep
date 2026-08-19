@@ -67,6 +67,11 @@ docker compose up --build
 
 The container is named `scgrep` by default.
 
+> **On start-up the baseline reads zero for about `TIME_LAG` + `TEST_INTERVAL`**
+> (≈ 6 minutes by default) while Redis refills from the live broker feed. This is
+> expected — see
+> [After a (re)start the baseline reads zero](#after-a-restart-the-baseline-reads-zero--for-about-time_lag).
+
 Traefik fronts the metrics endpoint; SCGRep does not publish its port directly.
 Traefik reaches it by service name (`scgrep:8000`) over the shared network, using
 the file-provider routing in `traefik/dynamic.yml`. After `docker compose up`:
@@ -548,6 +553,28 @@ outside Docker instead, point cron at the same script, e.g.:
 How to read a difference between the baseline and what a Global Replay
 service returns, how to confirm whether it is real, and the service
 behaviours that produce misleading numbers.
+
+### After a (re)start the baseline reads zero — for about `TIME_LAG`
+
+For the first few minutes after SCGRep starts, `messages_received` is **0** for
+every topic while `messages_fetched` is not. This is an artefact of starting up,
+not a fault, and it clears on its own.
+
+The baseline is built **in real time**: it counts only the messages SCGRep itself
+received live from the Global Brokers and recorded in Redis. A restart empties
+Redis, and SCGRep cannot retrospectively obtain messages published before it
+connected. But each cycle tests a window that ended `TIME_LAG` seconds ago — so
+until the whole of that window falls *after* start-up, the baseline for it is
+empty. The Global Replay service, by contrast, holds the history, so `http` and
+`mqtt` return their normal counts straight away.
+
+Expect it to last about **`TIME_LAG` + `TEST_INTERVAL`** (≈ 6 minutes with the
+default 300 s + 60 s), after which baselines fill in and the comparison becomes
+meaningful again. Ignore any `baseline` vs `http`/`mqtt` difference from that
+period — a `baseline = 0` against a large fetched count is your own missing
+history, not a replay surplus. The same reasoning applies to any gap in reception
+(see [Broker message age](#metrics)): the baseline can only ever reflect what this
+subscriber actually saw.
 
 ### Why the baseline and fetch counts differ
 
