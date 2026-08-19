@@ -210,9 +210,14 @@ messages exactly once:
    on that future), which gates whether it expects replays.
 4. All fetches share one **absolute deadline** anchored to the start of the cycle
    (95% of `TEST_INTERVAL`), so they stop together.
-5. For each async result, replace its count with the **deduplicated Redis count**
-   (`count_replay_messages`) for the window, when the fetch was not aborted (Redis
-   holds zero for a window where no messages were expected, so this is safe).
+5. Replace each fetch's count with a **local Redis re-count** over the same
+   half-open window, when the fetch was not aborted: `count_replay_messages` for
+   `mqtt` (also deduplicating across replay brokers) and `count_sync_messages` for
+   `http`. The latter matters because `numberMatched` is computed by the service on
+   *closed* `[start, end]` semantics and so includes the boundary second, which the
+   next contiguous window counts again; re-counting keeps `http`, `mqtt` and the
+   baseline on one interval. `numberMatched` is preserved on the `FetchResult` for
+   logging and for `invalid_numberMatched`.
 6. **Update every metric at once** at that 95% instant — baseline, `http`, and
    `mqtt` — so a single Prometheus scrape always sees a consistent set for the
    cycle rather than a mix of old and new values. The two message metrics are

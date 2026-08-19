@@ -118,6 +118,19 @@ def run_cycle(
                     centre_id, topic, start_epoch, end_epoch
                 )
                 result = replace(result, messages_fetched=deduped)
+            # The synchronous count needs the same treatment. `numberMatched` is
+            # computed by the service on **closed** [start, end] semantics (OGC
+            # API - Features selects features *intersecting* the interval), so it
+            # includes the whole boundary second — which the next, contiguous
+            # window then counts again. Re-count the messages the fetch actually
+            # paged through, from Redis, over the same half-open [start, end)
+            # window as the baseline and mqtt. `numberMatched` is preserved on the
+            # result and still drives `invalid_numberMatched`.
+            elif result.protocol == "http" and not result.aborted:
+                counted = store.count_sync_messages(
+                    centre_id, topic, start_epoch, end_epoch
+                )
+                result = replace(result, messages_fetched=counted)
             fetch_results.append((centre_id, topic, result))
 
     # Hold publication to exactly 95% of the test period. Fetches normally run
@@ -135,11 +148,15 @@ def run_cycle(
     for centre_id, topic, result in fetch_results:
         _publish(metrics, report_by, centre_id, topic, result)
         # Concise per-result summary for quick scanning of a cycle's outcome.
+        # `fetched` is SCGRep's half-open re-count; `numberMatched` is what the
+        # service claimed (http only, closed interval). Logging both lets a reader
+        # tell the boundary-second effect from genuine loss without re-deriving it.
         logger.info(
             "Result: centre_id=%s topic=%s protocol=%s baseline=%d fetched=%d "
-            "delay_ms=%.0f aborted=%d invalid_format=%d invalid_numberMatched=%d",
+            "numberMatched=%d delay_ms=%.0f aborted=%d invalid_format=%d "
+            "invalid_numberMatched=%d",
             centre_id, topic, result.protocol, baselines.get(topic, 0),
-            result.messages_fetched, result.fetch_delay_ms,
+            result.messages_fetched, result.number_matched, result.fetch_delay_ms,
             int(result.aborted), int(result.invalid_format),
             int(result.invalid_number_matched),
         )

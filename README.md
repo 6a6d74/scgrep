@@ -237,7 +237,7 @@ reachable over HTTPS at `https://<host>/metrics` (see [Running](#running)):
 | Metric | Labels | Description |
 | --- | --- | --- |
 | `wmo_wis2_scgrep_messages_received_total` | `report_by`, `topic` | **Cumulative counter**, incremented each test period by the messages received from Global Brokers on the topic (the baseline). Take the 60s delta (`X - X offset 60s`) for the exact per-interval count. |
-| `wmo_wis2_scgrep_messages_fetched_total` | `report_by`, `centre_id`, `topic`, `protocol` | **Cumulative counter**, incremented each test period by the messages retrieved from the Global Replay service — `numberMatched` for `http`; for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). Take the 60s delta (`X - X offset 60s`) for the exact per-interval count. |
+| `wmo_wis2_scgrep_messages_fetched_total` | `report_by`, `centre_id`, `topic`, `protocol` | **Cumulative counter**, incremented each test period by the messages retrieved from the Global Replay service, re-counted locally over the same half-open window as the baseline — for `http`, the messages actually returned across all pages (**not** `numberMatched`, see below); for `mqtt`, a Redis-deduplicated count of the replayed messages (the same message delivered by several replay brokers is counted once). Take the 60s delta (`X - X offset 60s`) for the exact per-interval count. |
 | `wmo_wis2_scgrep_test_aborted_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if retrieval did not complete within the test period. For `mqtt` this means the replay reported messages (`numberMatched > 0`) but delivered none over MQTT before the deadline; a `numberMatched = 0` window does **not** abort. |
 | `wmo_wis2_scgrep_fetch_delay_time` | `report_by`, `centre_id`, `topic`, `protocol` | Timeliness in milliseconds: `http` = time to first byte; `mqtt` = time to the first replayed message, or — when no messages are expected (`numberMatched = 0`) — the time to the process-execution HTTP response. |
 | `wmo_wis2_scgrep_response_invalid_format_flag` | `report_by`, `centre_id`, `topic`, `protocol` | `1` if the response was malformed. |
@@ -526,6 +526,17 @@ the tool is to watch **how large** the difference is.
   the same way as the baseline and deduplicated by message `id` across replay
   brokers) — sampled at **slightly different instants** against a continuously
   updating stream.
+- The **synchronous `numberMatched` is not used as the count.** OGC API - Features
+  selects features *intersecting* the `datetime` interval, which is closed at both
+  ends, so `numberMatched` includes the whole boundary second — and the next,
+  contiguous window includes it again. SCGRep therefore re-counts the messages the
+  fetch actually paged through over its own half-open `[start, end)` window, so
+  `http`, `mqtt` and the baseline all measure the same interval. Measured against
+  `ca-eccc-msc-global-replay` on 2026-08-19, the un-corrected `http` count exceeded
+  the baseline in 11.7% of topic-cycles, by exactly the boundary second's traffic
+  each time. `numberMatched` is still logged, and still drives
+  `response_invalid_numberMatched_flag` (a different question: did the service
+  serve as many messages as it claimed?).
 - Messages near the **edges of the datetime window** can fall on either side
   depending on exactly when each query runs, shifting a few messages in or out.
   The test window is **floored to whole seconds** and treated as **half-open**

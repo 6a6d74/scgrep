@@ -52,6 +52,10 @@ class FetchResult:
     # Features GET (paging: the final page's code) or the asynchronous Processes
     # POST. 0 means no response was received (e.g. connection failure/timeout).
     http_status: int = 0
+    # http only: ``numberMatched`` as reported by the service. Kept separate from
+    # ``messages_fetched`` because the caller replaces that with a locally
+    # re-counted, half-open total; this preserves what the service *claimed*.
+    number_matched: int = 0
 
 
 def _next_page_href(page: object) -> str | None:
@@ -226,6 +230,7 @@ def sync_fetch(
     return FetchResult(
         "http", False, False, ttfb_ms, number_matched,
         invalid_number_matched=invalid_number_matched, http_status=last_status,
+        number_matched=number_matched,
     )
 
 

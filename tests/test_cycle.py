@@ -58,7 +58,7 @@ def test_run_cycle_publishes_all_metrics():
             "numberMatched": 7,
             "features": [
                 {"type": "Feature", "id": f"h{i}",
-                 "properties": {"pubtime": "2026-08-16T09:00:00Z"}}
+                 "properties": {"pubtime": in_window}}
                 for i in range(7)
             ],
             "links": [],
@@ -175,7 +175,11 @@ def test_all_metrics_published_together_after_fetches(monkeypatch):
     release = threading.Event()
 
     def fake_sync(*a, **k):
-        return FetchResult("http", False, False, 1.0, 5)
+        # The real sync_fetch records every paged feature; run_cycle re-counts
+        # from Redis, so the fake must do the same.
+        for i in range(5):
+            store.store_sync_message(CENTRE, TOPIC, f"s{i}", epoch_to_iso(now - 11))
+        return FetchResult("http", False, False, 1.0, 5, number_matched=5)
 
     def fake_async(*a, **k):
         release.wait(3)  # simulate the async fetch running to ~95% of the period
@@ -206,6 +210,49 @@ def test_all_metrics_published_together_after_fetches(monkeypatch):
     assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 5
     mqtt_labels = dict(report_by=cfg.sensor_centre_id, centre_id=CENTRE, topic=TOPIC, protocol="mqtt")
     assert _gauge_value(metrics, metrics.messages_fetched, **mqtt_labels) == 2
+
+
+@responses.activate
+def test_http_count_excludes_the_boundary_second():
+    """`numberMatched` is computed on closed [start, end] semantics, so it
+    includes the boundary second — which the next contiguous window counts again.
+    messages_fetched must instead be SCGRep's half-open [start, end) re-count, so
+    it agrees with the baseline and the mqtt count."""
+    cfg = Config.from_env(dict(ENV))
+    client = fakeredis.FakeRedis(decode_responses=True)
+    store = RedisStore("redis:6379", cfg.redis_expiry, cfg.subscription_topics, client=client)
+    metrics = Metrics()
+
+    now = float(int(time.time()))
+    end_epoch = math.floor(now - cfg.time_lag)          # window upper bound
+    in_window = epoch_to_iso(end_epoch - 1)             # inside
+    boundary = epoch_to_iso(end_epoch)                  # exactly on the bound
+
+    store.store_message("b1", in_window, TOPIC)         # baseline = 1 (half-open)
+    store.store_message("b2", boundary, TOPIC)          # excluded by [start, end)
+
+    # The service returns both, and counts both in numberMatched (closed).
+    responses.add(
+        responses.GET, ITEMS_URL,
+        json={"type": "FeatureCollection", "numberMatched": 2, "links": [],
+              "features": [
+                  {"type": "Feature", "id": "b1", "properties": {"pubtime": in_window}},
+                  {"type": "Feature", "id": "b2", "properties": {"pubtime": boundary}},
+              ]},
+        status=200,
+    )
+    responses.add(responses.POST, EXEC_URL, json={"subscriptions": []}, status=200)
+
+    run_cycle(cfg, store, ReplayRegistry(), metrics, now=now)
+
+    report_by = cfg.sensor_centre_id
+    http_labels = dict(report_by=report_by, centre_id=CENTRE, topic=TOPIC, protocol="http")
+    # Baseline and http agree: both exclude the boundary second.
+    assert _gauge_value(metrics, metrics.messages_received, report_by=report_by, topic=TOPIC) == 1
+    assert _gauge_value(metrics, metrics.messages_fetched, **http_labels) == 1
+    # numberMatched (2) still drove the served-vs-claimed check, and matched the
+    # 2 features actually paged — so no mismatch is flagged.
+    assert _gauge_value(metrics, metrics.response_invalid_number_matched, **http_labels) == 0
 
 
 def test_window_is_floored_so_baseline_and_replay_query_match(monkeypatch):
@@ -266,7 +313,12 @@ def test_message_counters_accumulate_across_cycles(monkeypatch):
     now = float(int(time.time()))  # window (now-11 .. now-10); whole second (see above)
     store.store_message("a", epoch_to_iso(now - 10.5), TOPIC)  # baseline 1 per cycle
 
-    monkeypatch.setattr(tc, "sync_fetch", lambda *a, **k: FetchResult("http", False, False, 1.0, 5))
+    def fake_sync(*a, **k):
+        for i in range(5):
+            store.store_sync_message(CENTRE, TOPIC, f"s{i}", epoch_to_iso(now - 10.5))
+        return FetchResult("http", False, False, 1.0, 5, number_matched=5)
+
+    monkeypatch.setattr(tc, "sync_fetch", fake_sync)
     monkeypatch.setattr(tc, "async_fetch", lambda *a, **k: FetchResult("mqtt", False, False, 2.0, 0))
 
     run_cycle(cfg, store, registry, metrics, now=now)
@@ -292,7 +344,12 @@ def test_publication_held_until_95pct_even_when_fetches_finish_early(monkeypatch
     # and epoch_to_iso truncates to seconds, so this keeps the seeded replay
     # messages deterministically inside (now-11 .. now-10).
     now = float(int(time.time()))
-    monkeypatch.setattr(tc, "sync_fetch", lambda *a, **k: FetchResult("http", False, False, 1.0, 5))
+    def fake_sync(*a, **k):
+        for i in range(5):
+            store.store_sync_message(CENTRE, TOPIC, f"s{i}", epoch_to_iso(now - 10.5))
+        return FetchResult("http", False, False, 1.0, 5, number_matched=5)
+
+    monkeypatch.setattr(tc, "sync_fetch", fake_sync)
 
     def fake_async(*a, **k):
         # The mqtt count is always recomputed from Redis (deduplicated), so store
