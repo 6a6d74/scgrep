@@ -183,6 +183,8 @@ services:
       - scgrep
     volumes:
       - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      # Deployment-specific scrape jobs (git-ignored); see prometheus.yml.
+      - ./prometheus/scrape:/etc/prometheus/scrape:ro
       - prometheus-data:/prometheus
     ports:
       - "9090:9090"   # Prometheus UI

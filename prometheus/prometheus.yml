@@ -5,6 +5,13 @@ global:
   # counters spans several samples and yields a stable per-interval value.
   scrape_interval: 15s
 
+# Additional scrape jobs can be dropped into prometheus/scrape/ as *.yml. That
+# directory is git-ignored, so deployment-specific jobs — and any credentials
+# they carry — stay out of the repository. An absolute path avoids any ambiguity
+# about what relative paths resolve against.
+scrape_config_files:
+  - /etc/prometheus/scrape/*.yml
+
 scrape_configs:
   # SCGRep exposes its metrics on the plain-HTTP backend port; Prometheus is on
   # the same Compose network so it scrapes the container directly by name.

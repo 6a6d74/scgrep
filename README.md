@@ -406,6 +406,28 @@ over a **rolling 1-hour** window using `increase(...[1h])` (at the 1h scale the
 
 The rest of this section is for pointing an **external** Prometheus at SCGRep.
 
+### Adding your own scrape jobs
+
+The bundled Prometheus loads any `*.yml` in **`prometheus/scrape/`** in addition
+to its own config (`scrape_config_files: /etc/prometheus/scrape/*.yml`). That
+directory is **git-ignored**, so deployment-specific jobs — and any credentials
+they carry — stay out of the repository:
+
+```yaml
+# prometheus/scrape/my-job.yml
+scrape_configs:
+  - job_name: my-job
+    static_configs:
+      - targets: ["host.example:9100"]
+```
+
+```bash
+docker compose restart prometheus     # picks up new/changed files
+```
+
+Each file holds its own `scrape_configs:` list. The directory may be empty —
+Prometheus starts normally when the glob matches nothing.
+
 ### Using an external Prometheus
 
 #### 1. Add a scrape job
