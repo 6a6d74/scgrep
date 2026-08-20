@@ -279,7 +279,6 @@
       "title": "10. Broker message age",
       "description": "Seconds since the last MQTT message arrived from each broker. A low sawtooth is healthy (it resets on every message). A line climbing steadily while panel 9 still shows 'connected' means the connection is silently delivering nothing — baselines for those windows will read low or zero.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 54 },
       "fieldConfig": {
         "defaults": {
