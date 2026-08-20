@@ -4,6 +4,7 @@ global:
   # Scrape well under the 60s test period so increase(...[60s]) on the cumulative
   # counters spans several samples and yields a stable per-interval value.
   scrape_interval: 15s
+  scrape_timeout: 10s
 
 # Additional scrape jobs can be dropped into prometheus/scrape/ as *.yml. That
 # directory is git-ignored, so deployment-specific jobs — and any credentials
