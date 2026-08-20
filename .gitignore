@@ -42,3 +42,7 @@ prometheus/scrape/*.yml
 
 # Local working context for Claude Code
 CLAUDE.md
+
+# Locally-added Grafana panels that depend on a scrape source not every
+# deployment has (see prometheus/scrape/*.yml) — apply with `git apply`
+grafana/provisioning/dashboards/manual-panels.patch
