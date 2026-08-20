@@ -39,3 +39,6 @@ docs/scgrep-methodology-*.md
 # Deployment-specific Prometheus scrape jobs (may carry credentials, and are not
 # part of what SCGRep itself monitors). The directory is kept via .gitkeep.
 prometheus/scrape/*.yml
+
+# Local working context for Claude Code
+CLAUDE.md
