@@ -219,7 +219,6 @@
       "title": "8. HTTP response code",
       "description": "HTTP status code of each test's request — the synchronous Features GET (last page when paging) and the asynchronous Processes POST. 200 = OK; 4xx/5xx = a replay-service error (e.g. an HTML gateway page); 0 = no response (connection failure/timeout).",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 42 },
       "fieldConfig": {
         "defaults": {
@@ -246,7 +245,6 @@
       "title": "9. Broker connections",
       "description": "MQTT connection status per broker (Global Broker and Global Replay broker). Green = connected (1), red = disconnected (0). Independent of the centre_id/topic selectors. Use it to rule out local connectivity when a replay test looks broken.",
       "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "interval": "60s",
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 48 },
       "fieldConfig": {
         "defaults": {
